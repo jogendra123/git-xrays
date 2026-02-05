@@ -1,8 +1,13 @@
 from typing import Protocol
 from datetime import datetime
 
+from git_xrays.domain.models import FileChange
+
 
 class GitRepository(Protocol):
     def commit_count(self) -> int: ...
     def first_commit_date(self) -> datetime | None: ...
     def last_commit_date(self) -> datetime | None: ...
+    def file_changes(
+        self, since: datetime | None = None, until: datetime | None = None
+    ) -> list[FileChange]: ...
