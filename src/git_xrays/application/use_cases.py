@@ -4,9 +4,12 @@ from datetime import datetime, timedelta, timezone
 
 from git_xrays.domain.models import (
     AuthorContribution,
+    CouplingPair,
+    CouplingReport,
     FileChange,
     FileKnowledge,
     FileMetrics,
+    FilePain,
     HotspotReport,
     KnowledgeReport,
     RepoSummary,
@@ -227,3 +230,113 @@ def _compute_dri(changes: list[FileChange]) -> int:
             return i + 1
 
     return len(sorted_authors)
+
+
+def analyze_coupling(
+    repo: GitRepository, repo_path: str, window_days: int,
+    current_time: datetime | None = None,
+    min_shared_commits: int = 2,
+) -> CouplingReport:
+    now = current_time or datetime.now(timezone.utc)
+    since = now - timedelta(days=window_days)
+
+    changes = repo.file_changes(since=since, until=now)
+
+    if not changes:
+        return CouplingReport(
+            repo_path=repo_path, window_days=window_days,
+            from_date=since, to_date=now,
+            total_commits=0, coupling_pairs=[], file_pain=[],
+        )
+
+    # Build commit → set of files
+    commit_files: defaultdict[str, set[str]] = defaultdict(set)
+    for c in changes:
+        commit_files[c.commit_hash].add(c.file_path)
+
+    total_commits = len(commit_files)
+
+    # Count co-changes for each file pair and individual commit counts
+    file_commit_count: defaultdict[str, int] = defaultdict(int)
+    pair_shared: defaultdict[tuple[str, str], int] = defaultdict(int)
+
+    for files in commit_files.values():
+        sorted_files = sorted(files)
+        for f in sorted_files:
+            file_commit_count[f] += 1
+        for i in range(len(sorted_files)):
+            for j in range(i + 1, len(sorted_files)):
+                pair_shared[(sorted_files[i], sorted_files[j])] += 1
+
+    # Build coupling pairs with Jaccard filtering
+    coupling_pairs: list[CouplingPair] = []
+    for (fa, fb), shared in pair_shared.items():
+        if shared < min_shared_commits:
+            continue
+        union = file_commit_count[fa] + file_commit_count[fb] - shared
+        strength = round(shared / union, 4) if union > 0 else 0.0
+        support = round(shared / total_commits, 4) if total_commits > 0 else 0.0
+        coupling_pairs.append(CouplingPair(
+            file_a=fa, file_b=fb,
+            shared_commits=shared, total_commits=total_commits,
+            coupling_strength=strength, support=support,
+        ))
+
+    coupling_pairs.sort(key=lambda p: p.coupling_strength, reverse=True)
+
+    # Compute per-file metrics for PAIN
+    all_files = sorted(set(c.file_path for c in changes))
+
+    # Size: total churn per file
+    size_raw: defaultdict[str, int] = defaultdict(int)
+    volatility_raw: defaultdict[str, set[str]] = defaultdict(set)
+    for c in changes:
+        size_raw[c.file_path] += c.lines_added + c.lines_deleted
+        volatility_raw[c.file_path].add(c.commit_hash)
+
+    # Distance: mean coupling strength of filtered pairs involving the file
+    file_strengths: defaultdict[str, list[float]] = defaultdict(list)
+    for p in coupling_pairs:
+        file_strengths[p.file_a].append(p.coupling_strength)
+        file_strengths[p.file_b].append(p.coupling_strength)
+
+    distance_raw: dict[str, float] = {}
+    for f in all_files:
+        if f in file_strengths:
+            distance_raw[f] = round(sum(file_strengths[f]) / len(file_strengths[f]), 4)
+        else:
+            distance_raw[f] = 0.0
+
+    # Normalize
+    max_size = max(size_raw[f] for f in all_files) if all_files else 1
+    max_vol = max(len(volatility_raw[f]) for f in all_files) if all_files else 1
+    max_dist = max(distance_raw[f] for f in all_files) if all_files else 1.0
+
+    file_pain: list[FilePain] = []
+    for f in all_files:
+        s_raw = size_raw[f]
+        v_raw = len(volatility_raw[f])
+        d_raw = distance_raw[f]
+
+        s_norm = round(s_raw / max_size, 4) if max_size > 0 else 0.0
+        v_norm = round(v_raw / max_vol, 4) if max_vol > 0 else 0.0
+        d_norm = round(d_raw / max_dist, 4) if max_dist > 0 else 0.0
+
+        pain = round(s_norm * v_norm * d_norm, 4)
+
+        file_pain.append(FilePain(
+            file_path=f,
+            size_raw=s_raw, size_normalized=s_norm,
+            volatility_raw=v_raw, volatility_normalized=v_norm,
+            distance_raw=d_raw, distance_normalized=d_norm,
+            pain_score=pain,
+        ))
+
+    file_pain.sort(key=lambda fp: fp.pain_score, reverse=True)
+
+    return CouplingReport(
+        repo_path=repo_path, window_days=window_days,
+        from_date=since, to_date=now,
+        total_commits=total_commits,
+        coupling_pairs=coupling_pairs, file_pain=file_pain,
+    )

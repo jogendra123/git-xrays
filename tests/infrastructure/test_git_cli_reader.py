@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from git_xrays.application.use_cases import analyze_coupling
 from git_xrays.infrastructure.git_cli_reader import GitCliReader
 from tests.conftest import commit_file
 
@@ -135,3 +136,39 @@ class TestMultiAuthorFileChanges:
         # Alice should have 3 main.py commits
         alice_main = [c for c in changes if c.file_path == "main.py" and c.author_name == "Alice"]
         assert len(alice_main) == 3
+
+
+class TestCouplingIntegration:
+    """Integration tests: analyze_coupling with real git repos via GitCliReader."""
+
+    def test_coupled_files_detected(self, coupled_repo: Path):
+        reader = GitCliReader(str(coupled_repo))
+        report = analyze_coupling(reader, str(coupled_repo), 90)
+        assert len(report.coupling_pairs) > 0
+
+    def test_strongest_pair_is_a_b(self, coupled_repo: Path):
+        reader = GitCliReader(str(coupled_repo))
+        report = analyze_coupling(reader, str(coupled_repo), 90)
+        top = report.coupling_pairs[0]
+        assert top.file_a == "a.py"
+        assert top.file_b == "b.py"
+        # a+b share 3 commits, union=3 → strength=1.0
+        assert top.coupling_strength == 1.0
+
+    def test_uncoupled_file_has_zero_distance(self, coupled_repo: Path):
+        reader = GitCliReader(str(coupled_repo))
+        report = analyze_coupling(reader, str(coupled_repo), 90)
+        pain_map = {fp.file_path: fp for fp in report.file_pain}
+        assert pain_map["d.py"].distance_raw == 0.0
+
+    def test_all_files_have_pain_scores(self, coupled_repo: Path):
+        reader = GitCliReader(str(coupled_repo))
+        report = analyze_coupling(reader, str(coupled_repo), 90)
+        paths = {fp.file_path for fp in report.file_pain}
+        assert paths == {"a.py", "b.py", "c.py", "d.py"}
+
+    def test_pain_scores_in_range(self, coupled_repo: Path):
+        reader = GitCliReader(str(coupled_repo))
+        report = analyze_coupling(reader, str(coupled_repo), 90)
+        for fp in report.file_pain:
+            assert 0.0 <= fp.pain_score <= 1.0

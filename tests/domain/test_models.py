@@ -3,9 +3,12 @@ from datetime import datetime, timezone
 
 from git_xrays.domain.models import (
     AuthorContribution,
+    CouplingPair,
+    CouplingReport,
     FileChange,
     FileKnowledge,
     FileMetrics,
+    FilePain,
     HotspotReport,
     KnowledgeReport,
     RepoSummary,
@@ -196,3 +199,128 @@ class TestKnowledgeReport:
         )
         with __import__("pytest").raises(dataclasses.FrozenInstanceError):
             report.developer_risk_index = 5  # type: ignore[misc]
+
+
+class TestCouplingPair:
+    def test_creation(self):
+        cp = CouplingPair(
+            file_a="a.py", file_b="b.py",
+            shared_commits=3, total_commits=10,
+            coupling_strength=0.75, support=0.3,
+        )
+        assert cp.file_a == "a.py"
+        assert cp.file_b == "b.py"
+        assert cp.shared_commits == 3
+        assert cp.total_commits == 10
+        assert cp.coupling_strength == 0.75
+        assert cp.support == 0.3
+
+    def test_frozen(self):
+        cp = CouplingPair(
+            file_a="a.py", file_b="b.py",
+            shared_commits=1, total_commits=5,
+            coupling_strength=0.5, support=0.2,
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            cp.coupling_strength = 0.0  # type: ignore[misc]
+
+    def test_perfect_coupling(self):
+        cp = CouplingPair(
+            file_a="x.py", file_b="y.py",
+            shared_commits=5, total_commits=5,
+            coupling_strength=1.0, support=1.0,
+        )
+        assert cp.coupling_strength == 1.0
+        assert cp.support == 1.0
+
+
+class TestFilePain:
+    def test_creation(self):
+        fp = FilePain(
+            file_path="a.py",
+            size_raw=100, size_normalized=0.8,
+            volatility_raw=5, volatility_normalized=0.5,
+            distance_raw=0.6, distance_normalized=0.75,
+            pain_score=0.3,
+        )
+        assert fp.file_path == "a.py"
+        assert fp.size_raw == 100
+        assert fp.size_normalized == 0.8
+        assert fp.volatility_raw == 5
+        assert fp.volatility_normalized == 0.5
+        assert fp.distance_raw == 0.6
+        assert fp.distance_normalized == 0.75
+        assert fp.pain_score == 0.3
+
+    def test_frozen(self):
+        fp = FilePain(
+            file_path="a.py",
+            size_raw=10, size_normalized=1.0,
+            volatility_raw=1, volatility_normalized=1.0,
+            distance_raw=0.5, distance_normalized=1.0,
+            pain_score=1.0,
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            fp.pain_score = 0.0  # type: ignore[misc]
+
+    def test_zero_pain_when_dimension_zero(self):
+        fp = FilePain(
+            file_path="a.py",
+            size_raw=100, size_normalized=1.0,
+            volatility_raw=5, volatility_normalized=1.0,
+            distance_raw=0.0, distance_normalized=0.0,
+            pain_score=0.0,
+        )
+        assert fp.pain_score == 0.0
+
+
+class TestCouplingReport:
+    def test_creation(self):
+        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        report = CouplingReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt, to_date=dt,
+            total_commits=10,
+            coupling_pairs=[], file_pain=[],
+        )
+        assert report.repo_path == "/repo"
+        assert report.window_days == 90
+        assert report.total_commits == 10
+        assert report.coupling_pairs == []
+        assert report.file_pain == []
+
+    def test_frozen(self):
+        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        report = CouplingReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt, to_date=dt,
+            total_commits=0,
+            coupling_pairs=[], file_pain=[],
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            report.total_commits = 5  # type: ignore[misc]
+
+    def test_with_pairs_and_pain(self):
+        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        pair = CouplingPair(
+            file_a="a.py", file_b="b.py",
+            shared_commits=3, total_commits=5,
+            coupling_strength=0.75, support=0.6,
+        )
+        pain = FilePain(
+            file_path="a.py",
+            size_raw=100, size_normalized=1.0,
+            volatility_raw=5, volatility_normalized=1.0,
+            distance_raw=0.75, distance_normalized=1.0,
+            pain_score=1.0,
+        )
+        report = CouplingReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt, to_date=dt,
+            total_commits=5,
+            coupling_pairs=[pair], file_pain=[pain],
+        )
+        assert len(report.coupling_pairs) == 1
+        assert len(report.file_pain) == 1
+        assert report.coupling_pairs[0].coupling_strength == 0.75
+        assert report.file_pain[0].pain_score == 1.0

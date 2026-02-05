@@ -119,3 +119,71 @@ class TestKnowledgeCli:
         captured = capsys.readouterr()
         assert "Knowledge Analysis" in captured.out
         assert "last 30 days" in captured.out
+
+
+class TestCouplingCli:
+    def test_coupling_flag_prints_section(self, coupled_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(coupled_repo), "--coupling"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Coupling Analysis" in captured.out
+
+    def test_coupling_shows_strength_column(self, coupled_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(coupled_repo), "--coupling"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Strength" in captured.out
+
+    def test_coupling_shows_pain_section(self, coupled_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(coupled_repo), "--coupling"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "PAIN" in captured.out
+
+    def test_coupling_shows_size_volatility_distance(self, coupled_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(coupled_repo), "--coupling"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Size" in captured.out
+        assert "Volatility" in captured.out
+        assert "Distance" in captured.out
+
+    def test_no_coupling_flag_no_section(self, coupled_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(coupled_repo)],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Coupling Analysis" not in captured.out
+
+    def test_coupling_with_window(self, coupled_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(coupled_repo), "--coupling", "--window", "30d"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Coupling Analysis" in captured.out
+        assert "last 30 days" in captured.out
+
+    def test_coupling_empty_window_shows_header(self, coupled_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(coupled_repo), "--coupling", "--window", "1d"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Coupling Analysis" in captured.out

@@ -83,3 +83,42 @@ class KnowledgeReport:
     developer_risk_index: int
     knowledge_island_count: int
     files: list[FileKnowledge]  # sorted by knowledge_concentration descending
+
+
+@dataclass(frozen=True)
+class CouplingPair:
+    """Temporal coupling between two files based on co-change frequency."""
+
+    file_a: str  # alphabetically first
+    file_b: str  # alphabetically second
+    shared_commits: int
+    total_commits: int  # total unique commits in repo window
+    coupling_strength: float  # Jaccard: shared / union
+    support: float  # shared / total_commits
+
+
+@dataclass(frozen=True)
+class FilePain:
+    """PAIN metric for a single file: Size x Distance x Volatility."""
+
+    file_path: str
+    size_raw: int
+    size_normalized: float
+    volatility_raw: int
+    volatility_normalized: float
+    distance_raw: float
+    distance_normalized: float
+    pain_score: float
+
+
+@dataclass(frozen=True)
+class CouplingReport:
+    """Temporal coupling and PAIN analysis report."""
+
+    repo_path: str
+    window_days: int
+    from_date: datetime
+    to_date: datetime
+    total_commits: int
+    coupling_pairs: list[CouplingPair]  # sorted by coupling_strength descending
+    file_pain: list[FilePain]  # sorted by pain_score descending

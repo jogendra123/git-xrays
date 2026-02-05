@@ -110,3 +110,82 @@ def multi_author_repo(tmp_git_repo: Path) -> Path:
                 "Carol: touch config", days_ago=2,
                 author_name="Carol", author_email="carol@example.com")
     return tmp_git_repo
+
+
+def commit_files(
+    repo: Path,
+    files: dict[str, str],
+    message: str,
+    days_ago: int = 0,
+    author_name: str = "Test User",
+    author_email: str = "test@example.com",
+) -> None:
+    """Create a single commit touching multiple files at a known relative date."""
+    for file_path, content in files.items():
+        full_path = repo / file_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content)
+
+    date = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    date_str = date.strftime("%Y-%m-%dT%H:%M:%S %z")
+
+    for file_path in files:
+        subprocess.run(
+            ["git", "-C", str(repo), "add", file_path],
+            capture_output=True, check=True,
+        )
+
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": date_str,
+        "GIT_COMMITTER_DATE": date_str,
+        "GIT_AUTHOR_NAME": author_name,
+        "GIT_AUTHOR_EMAIL": author_email,
+        "GIT_COMMITTER_NAME": author_name,
+        "GIT_COMMITTER_EMAIL": author_email,
+    }
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", message],
+        capture_output=True, check=True,
+        env=env,
+    )
+
+
+@pytest.fixture
+def coupled_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo for coupling analysis.
+
+    a+b always together (3 commits), a+c sometimes (2 commits),
+    c alone once, d alone once. Total: 5 unique commits.
+    """
+    # Commit 1: a+b+c together
+    commit_files(tmp_git_repo, {
+        "a.py": "a_v1\n",
+        "b.py": "b_v1\n",
+        "c.py": "c_v1\n",
+    }, "commit 1: a+b+c", days_ago=25)
+
+    # Commit 2: a+b+c together
+    commit_files(tmp_git_repo, {
+        "a.py": "a_v2\n",
+        "b.py": "b_v2\n",
+        "c.py": "c_v2\n",
+    }, "commit 2: a+b+c", days_ago=20)
+
+    # Commit 3: a+b together
+    commit_files(tmp_git_repo, {
+        "a.py": "a_v3\n",
+        "b.py": "b_v3\n",
+    }, "commit 3: a+b", days_ago=15)
+
+    # Commit 4: c alone
+    commit_files(tmp_git_repo, {
+        "c.py": "c_v3\n",
+    }, "commit 4: c alone", days_ago=10)
+
+    # Commit 5: d alone
+    commit_files(tmp_git_repo, {
+        "d.py": "d_v1\n",
+    }, "commit 5: d alone", days_ago=5)
+
+    return tmp_git_repo
