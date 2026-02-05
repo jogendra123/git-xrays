@@ -98,3 +98,40 @@ class TestFileChanges:
         changes = reader.file_changes()
         file_paths = [c.file_path for c in changes]
         assert "image.png" not in file_paths
+
+    def test_author_names_extracted(self, git_repo_with_history: Path):
+        reader = GitCliReader(str(git_repo_with_history))
+        changes = reader.file_changes()
+        for c in changes:
+            assert c.author_name == "Test User"
+
+    def test_author_emails_extracted(self, git_repo_with_history: Path):
+        reader = GitCliReader(str(git_repo_with_history))
+        changes = reader.file_changes()
+        for c in changes:
+            assert c.author_email == "test@example.com"
+
+
+class TestMultiAuthorFileChanges:
+    def test_multi_author_names_extracted(self, multi_author_repo: Path):
+        reader = GitCliReader(str(multi_author_repo))
+        changes = reader.file_changes()
+        author_names = {c.author_name for c in changes}
+        assert "Alice" in author_names
+        assert "Bob" in author_names
+        assert "Carol" in author_names
+
+    def test_multi_author_emails_extracted(self, multi_author_repo: Path):
+        reader = GitCliReader(str(multi_author_repo))
+        changes = reader.file_changes()
+        author_emails = {c.author_email for c in changes}
+        assert "alice@example.com" in author_emails
+        assert "bob@example.com" in author_emails
+        assert "carol@example.com" in author_emails
+
+    def test_author_file_mapping(self, multi_author_repo: Path):
+        reader = GitCliReader(str(multi_author_repo))
+        changes = reader.file_changes()
+        # Alice should have 3 main.py commits
+        alice_main = [c for c in changes if c.file_path == "main.py" and c.author_name == "Alice"]
+        assert len(alice_main) == 3

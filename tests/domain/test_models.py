@@ -2,9 +2,12 @@ import dataclasses
 from datetime import datetime, timezone
 
 from git_xrays.domain.models import (
+    AuthorContribution,
     FileChange,
+    FileKnowledge,
     FileMetrics,
     HotspotReport,
+    KnowledgeReport,
     RepoSummary,
 )
 
@@ -44,17 +47,21 @@ class TestFileChange:
         fc = FileChange(
             commit_hash="abc123", date=dt,
             file_path="src/main.py", lines_added=10, lines_deleted=3,
+            author_name="Alice", author_email="alice@example.com",
         )
         assert fc.commit_hash == "abc123"
         assert fc.date == dt
         assert fc.file_path == "src/main.py"
         assert fc.lines_added == 10
         assert fc.lines_deleted == 3
+        assert fc.author_name == "Alice"
+        assert fc.author_email == "alice@example.com"
 
     def test_frozen(self):
         fc = FileChange(
             commit_hash="abc", date=datetime.now(timezone.utc),
             file_path="f.py", lines_added=1, lines_deleted=0,
+            author_name="Alice", author_email="alice@example.com",
         )
         with __import__("pytest").raises(dataclasses.FrozenInstanceError):
             fc.lines_added = 99  # type: ignore[misc]
@@ -107,3 +114,85 @@ class TestHotspotReport:
         )
         assert report.files == []
         assert report.total_commits == 0
+
+
+class TestAuthorContribution:
+    def test_creation(self):
+        ac = AuthorContribution(
+            author_name="Alice", author_email="alice@example.com",
+            change_count=5, total_churn=100, proportion=0.6,
+            weighted_proportion=0.7,
+        )
+        assert ac.author_name == "Alice"
+        assert ac.author_email == "alice@example.com"
+        assert ac.change_count == 5
+        assert ac.total_churn == 100
+        assert ac.proportion == 0.6
+        assert ac.weighted_proportion == 0.7
+
+    def test_frozen(self):
+        ac = AuthorContribution(
+            author_name="Alice", author_email="alice@example.com",
+            change_count=1, total_churn=10, proportion=1.0,
+            weighted_proportion=1.0,
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            ac.proportion = 0.5  # type: ignore[misc]
+
+
+class TestFileKnowledge:
+    def test_creation(self):
+        ac = AuthorContribution(
+            author_name="Alice", author_email="alice@example.com",
+            change_count=3, total_churn=60, proportion=0.8,
+            weighted_proportion=0.85,
+        )
+        fk = FileKnowledge(
+            file_path="main.py", knowledge_concentration=0.75,
+            primary_author="Alice", primary_author_pct=0.8,
+            is_knowledge_island=True, author_count=2, authors=[ac],
+        )
+        assert fk.file_path == "main.py"
+        assert fk.knowledge_concentration == 0.75
+        assert fk.primary_author == "Alice"
+        assert fk.primary_author_pct == 0.8
+        assert fk.is_knowledge_island is True
+        assert fk.author_count == 2
+        assert len(fk.authors) == 1
+
+    def test_frozen(self):
+        fk = FileKnowledge(
+            file_path="a.py", knowledge_concentration=0.5,
+            primary_author="Bob", primary_author_pct=0.5,
+            is_knowledge_island=False, author_count=2, authors=[],
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            fk.knowledge_concentration = 0.0  # type: ignore[misc]
+
+
+class TestKnowledgeReport:
+    def test_creation(self):
+        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        report = KnowledgeReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt, to_date=dt,
+            total_commits=10, developer_risk_index=2,
+            knowledge_island_count=1, files=[],
+        )
+        assert report.repo_path == "/repo"
+        assert report.window_days == 90
+        assert report.total_commits == 10
+        assert report.developer_risk_index == 2
+        assert report.knowledge_island_count == 1
+        assert report.files == []
+
+    def test_frozen(self):
+        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        report = KnowledgeReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt, to_date=dt,
+            total_commits=0, developer_risk_index=0,
+            knowledge_island_count=0, files=[],
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            report.developer_risk_index = 5  # type: ignore[misc]

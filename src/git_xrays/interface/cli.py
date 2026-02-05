@@ -2,7 +2,7 @@ import argparse
 import re
 import sys
 
-from git_xrays.application.use_cases import analyze_hotspots, get_repo_summary
+from git_xrays.application.use_cases import analyze_hotspots, analyze_knowledge, get_repo_summary
 from git_xrays.infrastructure.git_cli_reader import GitCliReader
 
 
@@ -28,6 +28,11 @@ def main() -> None:
         default=90,
         metavar="DAYS",
         help="Analysis window in days, e.g. 90d (default: 90d)",
+    )
+    parser.add_argument(
+        "--knowledge",
+        action="store_true",
+        help="Show knowledge distribution analysis",
     )
     args = parser.parse_args()
 
@@ -64,6 +69,11 @@ def main() -> None:
     _print_hotspots(report)
     print()
     _print_effort_distribution(report)
+
+    if args.knowledge:
+        knowledge_report = analyze_knowledge(git_reader, args.repo_path, args.window)
+        print()
+        _print_knowledge(knowledge_report)
 
 
 def _print_hotspots(report) -> None:
@@ -118,3 +128,47 @@ def _print_effort_distribution(report) -> None:
 
     if threshold_idx == 0:
         print(f"  All churn spread across {len(report.files)} files")
+
+
+def _print_knowledge(report) -> None:
+    print(f"--- Knowledge Analysis (last {report.window_days} days, {report.total_commits} commits) ---\n")
+
+    print(f"Developer Risk Index: {report.developer_risk_index}")
+    print(f"Knowledge Islands:    {report.knowledge_island_count}")
+    print()
+
+    if not report.files:
+        print("No file changes found in this window.")
+        return
+
+    path_width = min(max(len(f.file_path) for f in report.files), 60)
+    header = (
+        f"{'File':<{path_width}}  "
+        f"{'Concentration':>13}  "
+        f"{'Primary Author':<20}  "
+        f"{'Pct':>5}  "
+        f"{'Authors':>7}  "
+        f"{'Island':>6}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for f in report.files[:20]:
+        path = f.file_path
+        if len(path) > path_width:
+            path = "..." + path[-(path_width - 3):]
+        island_str = "Yes" if f.is_knowledge_island else "No"
+        author = f.primary_author
+        if len(author) > 20:
+            author = author[:17] + "..."
+        print(
+            f"{path:<{path_width}}  "
+            f"{f.knowledge_concentration:>13.4f}  "
+            f"{author:<20}  "
+            f"{f.primary_author_pct:>5.0%}  "
+            f"{f.author_count:>7}  "
+            f"{island_str:>6}"
+        )
+
+    if len(report.files) > 20:
+        print(f"  ... and {len(report.files) - 20} more files")

@@ -19,6 +19,8 @@ class FileChange:
     file_path: str
     lines_added: int
     lines_deleted: int
+    author_name: str
+    author_email: str
 
 
 @dataclass(frozen=True)
@@ -42,3 +44,42 @@ class HotspotReport:
     to_date: datetime
     total_commits: int
     files: list[FileMetrics]  # sorted by hotspot_score descending
+
+
+@dataclass(frozen=True)
+class AuthorContribution:
+    """A single author's contribution to a file."""
+
+    author_name: str
+    author_email: str
+    change_count: int
+    total_churn: int
+    proportion: float
+    weighted_proportion: float
+
+
+@dataclass(frozen=True)
+class FileKnowledge:
+    """Knowledge distribution metrics for a single file."""
+
+    file_path: str
+    knowledge_concentration: float  # KDI: 1.0 = single author, 0.0 = evenly distributed
+    primary_author: str
+    primary_author_pct: float
+    is_knowledge_island: bool
+    author_count: int
+    authors: list[AuthorContribution]
+
+
+@dataclass(frozen=True)
+class KnowledgeReport:
+    """Knowledge distribution report across all files in a time window."""
+
+    repo_path: str
+    window_days: int
+    from_date: datetime
+    to_date: datetime
+    total_commits: int
+    developer_risk_index: int
+    knowledge_island_count: int
+    files: list[FileKnowledge]  # sorted by knowledge_concentration descending

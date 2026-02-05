@@ -62,3 +62,60 @@ class TestMainCli:
         main()
         captured = capsys.readouterr()
         assert "No commits found." in captured.out
+
+
+class TestKnowledgeCli:
+    def test_knowledge_flag_prints_section(self, multi_author_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(multi_author_repo), "--knowledge"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Knowledge Analysis" in captured.out
+
+    def test_knowledge_shows_island_count(self, multi_author_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(multi_author_repo), "--knowledge"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Knowledge Islands:" in captured.out
+
+    def test_knowledge_shows_dri(self, multi_author_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(multi_author_repo), "--knowledge"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Developer Risk Index:" in captured.out
+
+    def test_knowledge_shows_concentration_column(self, multi_author_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(multi_author_repo), "--knowledge"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Concentration" in captured.out
+
+    def test_no_knowledge_flag_no_section(self, multi_author_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(multi_author_repo)],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Knowledge Analysis" not in captured.out
+
+    def test_knowledge_with_window(self, multi_author_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(multi_author_repo), "--knowledge", "--window", "30d"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Knowledge Analysis" in captured.out
+        assert "last 30 days" in captured.out

@@ -51,7 +51,7 @@ class GitCliReader:
     def file_changes(
         self, since: datetime | None = None, until: datetime | None = None
     ) -> list[FileChange]:
-        args = ["log", "--numstat", "--format=COMMIT:%H %aI"]
+        args = ["log", "--numstat", "--format=COMMIT:%H %aI %aN %aE"]
         if since:
             args.append(f"--since={since.isoformat()}")
         if until:
@@ -69,15 +69,19 @@ def _parse_numstat(output: str) -> list[FileChange]:
     changes: list[FileChange] = []
     current_hash = ""
     current_date = datetime.min
+    current_author_name = ""
+    current_author_email = ""
 
     for line in output.splitlines():
         line = line.strip()
         if not line:
             continue
         if line.startswith("COMMIT:"):
-            parts = line[7:].split(" ", 1)
-            current_hash = parts[0]
-            current_date = datetime.fromisoformat(parts[1])
+            tokens = line[7:].split(" ")
+            current_hash = tokens[0]
+            current_date = datetime.fromisoformat(tokens[1])
+            current_author_email = tokens[-1]
+            current_author_name = " ".join(tokens[2:-1])
             continue
         # numstat line: <added>\t<deleted>\t<file>
         parts = line.split("\t", 2)
@@ -94,6 +98,8 @@ def _parse_numstat(output: str) -> list[FileChange]:
                 file_path=file_path,
                 lines_added=int(added_str),
                 lines_deleted=int(deleted_str),
+                author_name=current_author_name,
+                author_email=current_author_email,
             )
         )
     return changes
