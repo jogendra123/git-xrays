@@ -351,6 +351,77 @@ class RunStore:
                     "total_commits", "hotspot_file_count", "dx_score"]
         return [dict(zip(columns, row)) for row in result]
 
+    def get_run(self, run_id: str) -> dict | None:
+        """Return full runs row as dict, or None if not found."""
+        result = self._conn.execute(
+            "SELECT * FROM runs WHERE run_id = ?", [run_id]
+        ).fetchone()
+        if result is None:
+            return None
+        cols = [desc[0] for desc in self._conn.description]
+        return dict(zip(cols, result))
+
+    def list_repos(self) -> list[str]:
+        """Return distinct repo_path values sorted alphabetically."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT repo_path FROM runs ORDER BY repo_path"
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def list_runs_for_repo(self, repo_path: str) -> list[dict]:
+        """Return runs for a specific repo, ordered by created_at descending."""
+        result = self._conn.execute(
+            """SELECT run_id, repo_path, created_at, window_days,
+                      total_commits, hotspot_file_count, dx_score
+               FROM runs
+               WHERE repo_path = ?
+               ORDER BY created_at DESC""",
+            [repo_path],
+        ).fetchall()
+        columns = ["run_id", "repo_path", "created_at", "window_days",
+                    "total_commits", "hotspot_file_count", "dx_score"]
+        return [dict(zip(columns, row)) for row in result]
+
+    def _query_child(self, table: str, run_id: str) -> list[dict]:
+        """Generic helper to query a child table by run_id."""
+        result = self._conn.execute(
+            f"SELECT * FROM {table} WHERE run_id = ?", [run_id]  # noqa: S608
+        ).fetchall()
+        if not result:
+            return []
+        cols = [desc[0] for desc in self._conn.description]
+        return [dict(zip(cols, row)) for row in result]
+
+    def get_hotspot_files(self, run_id: str) -> list[dict]:
+        return self._query_child("hotspot_files", run_id)
+
+    def get_knowledge_files(self, run_id: str) -> list[dict]:
+        return self._query_child("knowledge_files", run_id)
+
+    def get_coupling_pairs(self, run_id: str) -> list[dict]:
+        return self._query_child("coupling_pairs", run_id)
+
+    def get_file_pain(self, run_id: str) -> list[dict]:
+        return self._query_child("file_pain", run_id)
+
+    def get_anemia_classes(self, run_id: str) -> list[dict]:
+        return self._query_child("anemia_classes", run_id)
+
+    def get_complexity_functions(self, run_id: str) -> list[dict]:
+        return self._query_child("complexity_functions", run_id)
+
+    def get_cluster_summaries(self, run_id: str) -> list[dict]:
+        return self._query_child("cluster_summaries", run_id)
+
+    def get_cluster_drift(self, run_id: str) -> list[dict]:
+        return self._query_child("cluster_drift", run_id)
+
+    def get_effort_files(self, run_id: str) -> list[dict]:
+        return self._query_child("effort_files", run_id)
+
+    def get_dx_cognitive_files(self, run_id: str) -> list[dict]:
+        return self._query_child("dx_cognitive_files", run_id)
+
     def close(self) -> None:
         """Close the DuckDB connection."""
         self._conn.close()

@@ -114,6 +114,18 @@ def main() -> None:
         action="store_true",
         help="Show past runs from DuckDB, then exit",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Launch web dashboard (requires pip install git-xrays[web])",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        metavar="PORT",
+        help="API port for --serve (Streamlit uses PORT+1, default: 8000)",
+    )
     args = parser.parse_args()
 
     # Handle --list-runs early (no repo_path required)
@@ -124,6 +136,20 @@ def main() -> None:
         runs = store.list_runs()
         store.close()
         _print_runs(runs)
+        return
+
+    # Handle --serve early (no repo_path required)
+    if args.serve:
+        try:
+            from git_xrays.web.server import launch
+        except ImportError:
+            print(
+                "Error: web dependencies not installed. "
+                "Run: pip install git-xrays[web]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        launch(db_path=args.db, api_port=args.port)
         return
 
     # repo_path is required for all other paths

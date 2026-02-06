@@ -534,3 +534,194 @@ class TestRunStoreConcurrency:
         store.close()
         assert json.loads(row[0]) == [0.3, 0.25, 0.2, 0.15, 0.1]
         assert json.loads(row[1]) == [0.3, 0.25, 0.25, 0.2]
+
+
+# ── TestRunStoreGetRun ──────────────────────────────────────────────
+
+
+class TestRunStoreGetRun:
+    def test_returns_none_for_missing_id(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        result = store.get_run("nonexistent")
+        store.close()
+        assert result is None
+
+    def test_returns_dict_for_existing_run(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/repo", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        result = store.get_run("run-1")
+        store.close()
+        assert result is not None
+        assert result["run_id"] == "run-1"
+
+    def test_contains_all_columns(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/repo", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        result = store.get_run("run-1")
+        store.close()
+        assert "dx_score" in result
+        assert "effort_coefficients" in result
+        assert "repo_path" in result
+
+    def test_dx_score_value(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/repo", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        result = store.get_run("run-1")
+        store.close()
+        assert result["dx_score"] == 0.72
+
+
+# ── TestRunStoreListRepos ───────────────────────────────────────────
+
+
+class TestRunStoreListRepos:
+    def test_empty_db_returns_empty(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        result = store.list_repos()
+        store.close()
+        assert result == []
+
+    def test_returns_distinct_repos(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/repo-a", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        store.save_run("run-2", "/repo-b", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        store.save_run("run-3", "/repo-a", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        result = store.list_repos()
+        store.close()
+        assert sorted(result) == ["/repo-a", "/repo-b"]
+
+    def test_ordered_alphabetically(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/zebra", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        store.save_run("run-2", "/alpha", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        result = store.list_repos()
+        store.close()
+        assert result == ["/alpha", "/zebra"]
+
+
+# ── TestRunStoreListRunsForRepo ─────────────────────────────────────
+
+
+class TestRunStoreListRunsForRepo:
+    def test_empty_db_returns_empty(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        result = store.list_runs_for_repo("/nonexistent")
+        store.close()
+        assert result == []
+
+    def test_filters_by_repo_path(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/repo-a", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        store.save_run("run-2", "/repo-b", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        result = store.list_runs_for_repo("/repo-a")
+        store.close()
+        assert len(result) == 1
+        assert result[0]["run_id"] == "run-1"
+
+    def test_ordered_desc_by_created_at(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/repo", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        store.save_run("run-2", "/repo", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        result = store.list_runs_for_repo("/repo")
+        store.close()
+        assert result[0]["run_id"] == "run-2"
+
+    def test_returns_key_columns(self, tmp_path):
+        store = RunStore(db_path=str(tmp_path / "test.db"))
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/repo", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        result = store.list_runs_for_repo("/repo")
+        store.close()
+        row = result[0]
+        assert "run_id" in row
+        assert "created_at" in row
+        assert "dx_score" in row
+        assert "total_commits" in row
+
+
+# ── TestRunStoreChildGetters ────────────────────────────────────────
+
+
+class TestRunStoreChildGetters:
+    @pytest.fixture
+    def store_with_run(self, tmp_path):
+        db_file = str(tmp_path / "test.db")
+        store = RunStore(db_path=db_file)
+        summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+        store.save_run("run-1", "/repo", 90, summary, hotspot, knowledge,
+                        coupling, anemia, complexity, clustering, effort, dx)
+        yield store
+        store.close()
+
+    def test_get_hotspot_files_returns_correct_count(self, store_with_run):
+        result = store_with_run.get_hotspot_files("run-1")
+        assert len(result) == 2
+
+    def test_get_hotspot_files_has_expected_keys(self, store_with_run):
+        result = store_with_run.get_hotspot_files("run-1")
+        assert "file_path" in result[0]
+        assert "hotspot_score" in result[0]
+
+    def test_get_hotspot_files_empty_for_missing_run(self, store_with_run):
+        result = store_with_run.get_hotspot_files("nonexistent")
+        assert result == []
+
+    def test_get_knowledge_files(self, store_with_run):
+        result = store_with_run.get_knowledge_files("run-1")
+        assert len(result) == 1
+        assert result[0]["file_path"] == "src/a.py"
+
+    def test_get_coupling_pairs(self, store_with_run):
+        result = store_with_run.get_coupling_pairs("run-1")
+        assert len(result) == 1
+        assert result[0]["file_a"] == "src/a.py"
+
+    def test_get_file_pain(self, store_with_run):
+        result = store_with_run.get_file_pain("run-1")
+        assert len(result) == 2
+
+    def test_get_anemia_classes(self, store_with_run):
+        result = store_with_run.get_anemia_classes("run-1")
+        assert len(result) == 1
+        assert result[0]["class_name"] == "UserDTO"
+
+    def test_get_complexity_functions(self, store_with_run):
+        result = store_with_run.get_complexity_functions("run-1")
+        assert len(result) == 2
+
+    def test_get_cluster_summaries(self, store_with_run):
+        result = store_with_run.get_cluster_summaries("run-1")
+        assert len(result) == 2
+
+    def test_get_cluster_drift(self, store_with_run):
+        result = store_with_run.get_cluster_drift("run-1")
+        assert len(result) == 2
+
+    def test_get_effort_files(self, store_with_run):
+        result = store_with_run.get_effort_files("run-1")
+        assert len(result) == 2
+
+    def test_get_dx_cognitive_files(self, store_with_run):
+        result = store_with_run.get_dx_cognitive_files("run-1")
+        assert len(result) == 1
+        assert result[0]["file_path"] == "src/a.py"
