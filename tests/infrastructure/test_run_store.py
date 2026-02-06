@@ -6,7 +6,7 @@ import duckdb
 import pytest
 
 from git_xrays.domain.models import (
-    AnemiaReport,
+    AnemicReport,
     ClassMetrics,
     ClusterDrift,
     ClusteringReport,
@@ -19,7 +19,7 @@ from git_xrays.domain.models import (
     DXReport,
     EffortReport,
     FeatureAttribution,
-    FileAnemia,
+    FileAnemic,
     FileCognitiveLoad,
     FileComplexity,
     FileEffort,
@@ -86,14 +86,14 @@ def _make_coupling() -> CouplingReport:
     )
 
 
-def _make_anemia() -> AnemiaReport:
-    return AnemiaReport(
+def _make_anemia() -> AnemicReport:
+    return AnemicReport(
         repo_path="/repo", ref=None,
         total_files=1, total_classes=1,
         anemic_count=1, anemic_percentage=100.0,
         average_ams=0.75, ams_threshold=0.5,
         files=[
-            FileAnemia("src/a.py", 1, 1, 0.75, [
+            FileAnemic("src/a.py", 1, 1, 0.75, [
                 ClassMetrics("UserDTO", "src/a.py", 3, 2, 0, 0, 0,
                              1.0, 0.0, 1.0, 0.75),
             ], 2),

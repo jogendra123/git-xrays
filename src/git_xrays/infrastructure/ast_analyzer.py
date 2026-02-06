@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import os
 
-from git_xrays.domain.models import ClassMetrics, FileAnemia
+from git_xrays.domain.models import ClassMetrics, FileAnemic
 
 _LOGIC_NODES = (ast.If, ast.For, ast.While, ast.Try, ast.With)
 
@@ -110,12 +110,12 @@ def analyze_class_source(node: ast.ClassDef, file_path: str) -> ClassMetrics:
 
 def analyze_file(
     source: str, file_path: str, ams_threshold: float = 0.5,
-) -> FileAnemia:
+) -> FileAnemic:
     """Analyze all top-level classes in a Python source string."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return FileAnemia(
+        return FileAnemic(
             file_path=file_path,
             class_count=0,
             anemic_class_count=0,
@@ -134,7 +134,7 @@ def analyze_file(
     anemic_count = sum(1 for c in classes if c.ams > ams_threshold)
     worst_ams = classes[0].ams if classes else 0.0
 
-    return FileAnemia(
+    return FileAnemic(
         file_path=file_path,
         class_count=len(classes),
         anemic_class_count=anemic_count,

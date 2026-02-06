@@ -180,7 +180,7 @@ class ClassMetrics:
 
 
 @dataclass(frozen=True)
-class FileAnemia:
+class FileAnemic:
     """Anemia metrics for a single file."""
 
     file_path: str
@@ -192,7 +192,7 @@ class FileAnemia:
 
 
 @dataclass(frozen=True)
-class AnemiaReport:
+class AnemicReport:
     """Anemia analysis report across all Python files."""
 
     repo_path: str
@@ -203,7 +203,7 @@ class AnemiaReport:
     anemic_percentage: float       # anemic_count / total_classes * 100
     average_ams: float
     ams_threshold: float           # default 0.5
-    files: list[FileAnemia]        # sorted by worst_ams desc
+    files: list[FileAnemic]        # sorted by worst_ams desc
 
 
 @dataclass(frozen=True)
@@ -341,3 +341,41 @@ class EffortReport:
     feature_names: list[str]   # 5 feature names in order
     coefficients: list[float]  # 5 learned coefficients
     files: list[FileEffort]    # sorted by rei_score desc
+
+
+@dataclass(frozen=True)
+class FileCognitiveLoad:
+    """Cognitive load breakdown for a single file."""
+
+    file_path: str
+    complexity_score: float       # normalized from ComplexityReport
+    coordination_score: float     # normalized coupling distance
+    knowledge_score: float        # knowledge_concentration
+    change_rate_score: float      # normalized file commit count
+    composite_load: float         # mean of 4 sub-scores in [0,1]
+
+
+@dataclass(frozen=True)
+class DXMetrics:
+    """The four DX Core metrics."""
+
+    throughput: float             # [0,1]
+    feedback_delay: float         # [0,1]
+    focus_ratio: float            # [0,1]
+    cognitive_load: float         # [0,1]
+
+
+@dataclass(frozen=True)
+class DXReport:
+    """Developer Experience analysis report."""
+
+    repo_path: str
+    window_days: int
+    from_date: datetime
+    to_date: datetime
+    total_commits: int
+    total_files: int
+    dx_score: float               # composite in [0,1]
+    weights: list[float]          # 4 weights [throughput, feedback, focus, cognitive]
+    metrics: DXMetrics
+    cognitive_load_files: list[FileCognitiveLoad]  # sorted by composite_load desc

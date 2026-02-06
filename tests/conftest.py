@@ -181,7 +181,7 @@ def tagged_repo(tmp_git_repo: Path) -> Path:
 
 
 @pytest.fixture
-def anemia_repo(tmp_git_repo: Path) -> Path:
+def anemic_repo(tmp_git_repo: Path) -> Path:
     """Create a repo with a mix of anemic and healthy Python classes.
 
     - models.py: UserDTO (anemic - data only + getters)
@@ -354,6 +354,109 @@ def effort_repo(tmp_git_repo: Path) -> Path:
         "coupled_a.py": "import coupled_b\nresult = coupled_b.data\n",
         "coupled_b.py": "data = [1, 2, 3]\n",
     }, "Update coupled modules", days_ago=5)
+    return tmp_git_repo
+
+
+@pytest.fixture
+def dx_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with diverse patterns for DX analysis.
+
+    - 5 Python files, ~8 commits, diverse patterns
+    - Mix of feature/bugfix/refactoring patterns
+    - Multiple authors for knowledge signals
+    - Python files for complexity analysis
+    """
+    # Feature-like: many files, high additions
+    commit_files(tmp_git_repo, {
+        "src/core.py": (
+            "def process(data, mode):\n"
+            "    if not data:\n"
+            "        return None\n"
+            "    for item in data:\n"
+            "        if mode == 'strict':\n"
+            "            if item:\n"
+            "                yield item\n"
+        ),
+        "src/utils.py": "def helper(x):\n    return x + 1\n",
+        "src/config.py": "DEBUG = True\n",
+    }, "feat: initial implementation", days_ago=40,
+        author_name="Alice", author_email="alice@example.com")
+
+    # Feature: add more code
+    commit_files(tmp_git_repo, {
+        "src/core.py": (
+            "def process(data, mode):\n"
+            "    if not data:\n"
+            "        return None\n"
+            "    for item in data:\n"
+            "        if mode == 'strict':\n"
+            "            if item:\n"
+            "                yield item\n"
+            "        elif mode == 'lenient':\n"
+            "            yield item\n"
+        ),
+        "src/models.py": "class User:\n    name = ''\n    email = ''\n",
+    }, "feat: add lenient mode and models", days_ago=30,
+        author_name="Alice", author_email="alice@example.com")
+
+    # Bugfix-like: single file, small change
+    commit_file(tmp_git_repo, "src/core.py",
+        (
+            "def process(data, mode):\n"
+            "    if not data:\n"
+            "        return []\n"
+            "    for item in data:\n"
+            "        if mode == 'strict':\n"
+            "            if item:\n"
+            "                yield item\n"
+            "        elif mode == 'lenient':\n"
+            "            yield item\n"
+        ),
+        "fix: return empty list instead of None", days_ago=20,
+        author_name="Bob", author_email="bob@example.com")
+
+    # Another feature
+    commit_file(tmp_git_repo, "src/api.py",
+        "def handle_request(req):\n    return {'status': 'ok'}\n",
+        "feat: add API handler", days_ago=15,
+        author_name="Alice", author_email="alice@example.com")
+
+    # Refactoring: touch multiple files
+    commit_files(tmp_git_repo, {
+        "src/core.py": (
+            "def process(data, mode='strict'):\n"
+            "    if not data:\n"
+            "        return []\n"
+            "    result = []\n"
+            "    for item in data:\n"
+            "        if mode == 'strict' and item:\n"
+            "            result.append(item)\n"
+            "        elif mode == 'lenient':\n"
+            "            result.append(item)\n"
+            "    return result\n"
+        ),
+        "src/utils.py": "def helper(x):\n    return x + 1\n\ndef validate(x):\n    if x is None:\n        raise ValueError('invalid')\n",
+    }, "refactor: simplify core and add validation", days_ago=10,
+        author_name="Bob", author_email="bob@example.com")
+
+    # Config update
+    commit_file(tmp_git_repo, "src/config.py",
+        "DEBUG = False\nVERBOSE = True\n",
+        "config: disable debug", days_ago=5,
+        author_name="Alice", author_email="alice@example.com")
+
+    # Another bugfix
+    commit_file(tmp_git_repo, "src/api.py",
+        "def handle_request(req):\n    if not req:\n        return {'status': 'error'}\n    return {'status': 'ok'}\n",
+        "fix: handle empty request", days_ago=3,
+        author_name="Bob", author_email="bob@example.com")
+
+    # Late feature
+    commit_file(tmp_git_repo, "src/models.py",
+        "class User:\n    name = ''\n    email = ''\n    def __init__(self, name, email):\n        self.name = name\n        self.email = email\n",
+        "feat: add User constructor", days_ago=1,
+        author_name="Alice", author_email="alice@example.com")
+
     return tmp_git_repo
 
 

@@ -2,7 +2,7 @@ import dataclasses
 from datetime import datetime, timezone
 
 from git_xrays.domain.models import (
-    AnemiaReport,
+    AnemicReport,
     AuthorContribution,
     ClassMetrics,
     ClusterDrift,
@@ -13,10 +13,13 @@ from git_xrays.domain.models import (
     ComplexityReport,
     CouplingPair,
     CouplingReport,
+    DXMetrics,
+    DXReport,
     EffortReport,
     FeatureAttribution,
-    FileAnemia,
+    FileAnemic,
     FileChange,
+    FileCognitiveLoad,
     FileComplexity,
     FileEffort,
     FileHotspotDelta,
@@ -490,7 +493,7 @@ class TestFileAnemia:
             dunder_method_count=1, property_count=0,
             dbsi=1.0, logic_density=0.0, orchestration_pressure=1.0, ams=1.0,
         )
-        fa = FileAnemia(
+        fa = FileAnemic(
             file_path="foo.py",
             class_count=1,
             anemic_class_count=1,
@@ -506,7 +509,7 @@ class TestFileAnemia:
         assert fa.touch_count == 3
 
     def test_frozen(self):
-        fa = FileAnemia(
+        fa = FileAnemic(
             file_path="a.py", class_count=0, anemic_class_count=0,
             worst_ams=0.0, classes=[], touch_count=0,
         )
@@ -516,7 +519,7 @@ class TestFileAnemia:
 
 class TestAnemiaReport:
     def test_creation(self):
-        report = AnemiaReport(
+        report = AnemicReport(
             repo_path="/repo",
             ref=None,
             total_files=10,
@@ -897,3 +900,129 @@ class TestEffortReport:
         )
         assert report.files == []
         assert report.total_files == 0
+
+
+class TestFileCognitiveLoad:
+    def test_creation(self):
+        fcl = FileCognitiveLoad(
+            file_path="src/core.py",
+            complexity_score=0.82,
+            coordination_score=0.91,
+            knowledge_score=0.76,
+            change_rate_score=0.88,
+            composite_load=0.8425,
+        )
+        assert fcl.file_path == "src/core.py"
+        assert fcl.complexity_score == 0.82
+        assert fcl.coordination_score == 0.91
+        assert fcl.knowledge_score == 0.76
+        assert fcl.change_rate_score == 0.88
+        assert fcl.composite_load == 0.8425
+
+    def test_frozen(self):
+        fcl = FileCognitiveLoad(
+            file_path="a.py",
+            complexity_score=0.5, coordination_score=0.5,
+            knowledge_score=0.5, change_rate_score=0.5,
+            composite_load=0.5,
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            fcl.composite_load = 0.0  # type: ignore[misc]
+
+
+class TestDXMetrics:
+    def test_creation(self):
+        m = DXMetrics(
+            throughput=0.65,
+            feedback_delay=0.82,
+            focus_ratio=0.71,
+            cognitive_load=0.42,
+        )
+        assert m.throughput == 0.65
+        assert m.feedback_delay == 0.82
+        assert m.focus_ratio == 0.71
+        assert m.cognitive_load == 0.42
+
+    def test_frozen(self):
+        m = DXMetrics(
+            throughput=0.5, feedback_delay=0.5,
+            focus_ratio=0.5, cognitive_load=0.5,
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            m.throughput = 0.0  # type: ignore[misc]
+
+
+class TestDXReport:
+    def test_creation(self):
+        dt1 = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        dt2 = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        metrics = DXMetrics(
+            throughput=0.65, feedback_delay=0.82,
+            focus_ratio=0.71, cognitive_load=0.42,
+        )
+        report = DXReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt1, to_date=dt2,
+            total_commits=42, total_files=15,
+            dx_score=0.7234,
+            weights=[0.3, 0.25, 0.25, 0.2],
+            metrics=metrics,
+            cognitive_load_files=[],
+        )
+        assert report.repo_path == "/repo"
+        assert report.window_days == 90
+        assert report.total_commits == 42
+        assert report.total_files == 15
+        assert report.dx_score == 0.7234
+        assert report.weights == [0.3, 0.25, 0.25, 0.2]
+        assert report.metrics.throughput == 0.65
+        assert report.cognitive_load_files == []
+
+    def test_frozen(self):
+        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        metrics = DXMetrics(
+            throughput=0.5, feedback_delay=0.5,
+            focus_ratio=0.5, cognitive_load=0.5,
+        )
+        report = DXReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt, to_date=dt,
+            total_commits=0, total_files=0,
+            dx_score=0.0, weights=[0.25, 0.25, 0.25, 0.25],
+            metrics=metrics, cognitive_load_files=[],
+        )
+        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+            report.dx_score = 1.0  # type: ignore[misc]
+
+    def test_empty_files(self):
+        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        metrics = DXMetrics(
+            throughput=0.0, feedback_delay=0.0,
+            focus_ratio=0.0, cognitive_load=0.0,
+        )
+        report = DXReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt, to_date=dt,
+            total_commits=0, total_files=0,
+            dx_score=0.0, weights=[0.3, 0.25, 0.25, 0.2],
+            metrics=metrics, cognitive_load_files=[],
+        )
+        assert report.cognitive_load_files == []
+        assert report.total_files == 0
+
+    def test_weights(self):
+        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        metrics = DXMetrics(
+            throughput=1.0, feedback_delay=1.0,
+            focus_ratio=1.0, cognitive_load=0.0,
+        )
+        weights = [0.4, 0.3, 0.2, 0.1]
+        report = DXReport(
+            repo_path="/repo", window_days=90,
+            from_date=dt, to_date=dt,
+            total_commits=10, total_files=5,
+            dx_score=1.0, weights=weights,
+            metrics=metrics, cognitive_load_files=[],
+        )
+        assert report.weights == [0.4, 0.3, 0.2, 0.1]
+        assert len(report.weights) == 4

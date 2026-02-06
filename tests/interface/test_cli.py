@@ -300,46 +300,46 @@ class TestCompareFlags:
 
 
 class TestAnemiaCli:
-    def test_anemia_flag_prints_section(self, anemia_repo, capsys, monkeypatch):
+    def test_anemic_flag_prints_section(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemia_repo), "--anemia"],
+            ["analyze-repo", str(anemic_repo), "--anemia"],
         )
         main()
         captured = capsys.readouterr()
         assert "Anemia Analysis" in captured.out
 
-    def test_anemia_shows_total_classes(self, anemia_repo, capsys, monkeypatch):
+    def test_anemia_shows_total_classes(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemia_repo), "--anemia"],
+            ["analyze-repo", str(anemic_repo), "--anemia"],
         )
         main()
         captured = capsys.readouterr()
         assert "Total classes:" in captured.out
 
-    def test_anemia_shows_anemic_count(self, anemia_repo, capsys, monkeypatch):
+    def test_anemia_shows_anemic_count(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemia_repo), "--anemia"],
+            ["analyze-repo", str(anemic_repo), "--anemia"],
         )
         main()
         captured = capsys.readouterr()
         assert "Anemic classes:" in captured.out
 
-    def test_no_anemia_flag_no_section(self, anemia_repo, capsys, monkeypatch):
+    def test_no_anemia_flag_no_section(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemia_repo)],
+            ["analyze-repo", str(anemic_repo)],
         )
         main()
         captured = capsys.readouterr()
         assert "Anemia Analysis" not in captured.out
 
-    def test_anemia_with_at_flag(self, anemia_repo, capsys, monkeypatch):
+    def test_anemia_with_at_flag(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemia_repo), "--anemia", "--at", "HEAD"],
+            ["analyze-repo", str(anemic_repo), "--anemia", "--at", "HEAD"],
         )
         main()
         captured = capsys.readouterr()
@@ -535,3 +535,270 @@ class TestEffortCli:
         captured = capsys.readouterr()
         assert "Effort Analysis" in captured.out
         assert "last 30 days" in captured.out
+
+
+class TestDXCli:
+    def test_dx_flag_prints_section(self, dx_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--dx"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Developer Experience Analysis" in captured.out
+
+    def test_dx_shows_score(self, dx_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--dx"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "DX Score" in captured.out
+
+    def test_dx_shows_metrics(self, dx_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--dx"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Throughput" in captured.out
+        assert "Feedback" in captured.out
+        assert "Focus" in captured.out
+        assert "Cognitive" in captured.out
+
+    def test_no_dx_flag_no_section(self, dx_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo)],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Developer Experience" not in captured.out
+
+    def test_dx_with_at_flag(self, dx_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--dx", "--at", "HEAD"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Developer Experience Analysis" in captured.out
+
+
+class TestListRunsFlag:
+    def test_list_runs_no_repo_required(self, tmp_path, capsys, monkeypatch):
+        db_file = str(tmp_path / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", "--list-runs", "--db", db_file],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "No runs found." in captured.out
+
+    def test_list_runs_empty_db_message(self, tmp_path, capsys, monkeypatch):
+        db_file = str(tmp_path / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", "--list-runs", "--db", db_file],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "No runs found." in captured.out
+
+    def test_list_runs_shows_table_after_all(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        # First do --all to store a run
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file],
+        )
+        main()
+        capsys.readouterr()  # discard output
+
+        # Now list runs
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", "--list-runs", "--db", db_file],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Run ID" in captured.out
+        assert "Repository" in captured.out
+        assert "DX" in captured.out
+
+    def test_list_runs_with_custom_db(self, tmp_path, capsys, monkeypatch):
+        db_file = str(tmp_path / "custom.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", "--list-runs", "--db", db_file],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "No runs found." in captured.out
+
+    def test_list_runs_shows_repo_path(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file],
+        )
+        main()
+        capsys.readouterr()
+
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", "--list-runs", "--db", db_file],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert str(dx_repo) in captured.out or "..." in captured.out
+
+    def test_no_repo_path_without_list_runs_errors(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["analyze-repo"])
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "repo_path" in captured.err
+
+
+class TestAllFlag:
+    def test_all_prints_all_sections(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Hotspot Analysis" in captured.out
+        assert "Knowledge Analysis" in captured.out
+        assert "Coupling Analysis" in captured.out
+        assert "Anemia Analysis" in captured.out
+        assert "Complexity Analysis" in captured.out
+        assert "Clustering Analysis" in captured.out
+        assert "Effort Analysis" in captured.out
+        assert "Developer Experience Analysis" in captured.out
+
+    def test_all_prints_run_id(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Run stored:" in captured.out
+
+    def test_all_creates_db(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file],
+        )
+        main()
+        from pathlib import Path
+        assert Path(db_file).exists()
+
+    def test_all_stores_run_in_db(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file],
+        )
+        main()
+        from git_xrays.infrastructure.run_store import RunStore
+        store = RunStore(db_path=db_file)
+        runs = store.list_runs()
+        store.close()
+        assert len(runs) == 1
+
+    def test_all_custom_db(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "custom" / "my.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file],
+        )
+        main()
+        from pathlib import Path
+        assert Path(db_file).exists()
+
+    def test_all_with_at_flag(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file, "--at", "HEAD"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Snapshot at:" in captured.out
+        assert "Run stored:" in captured.out
+
+    def test_all_incompatible_with_from_to(self, dx_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--from", "HEAD", "--to", "HEAD"],
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "--all" in captured.err
+
+    def test_all_with_window(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file, "--window", "30d"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "last 30 days" in captured.out
+        assert "Run stored:" in captured.out
+
+
+class TestDbFlag:
+    def test_db_without_all_is_noop(self, git_repo_with_history, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(git_repo_with_history), "--db", db_file],
+        )
+        main()
+        from pathlib import Path
+        # DB should NOT be created when --db is used without --all/--list-runs
+        assert not Path(db_file).exists()
+
+    def test_db_with_all(self, dx_repo, tmp_path_factory, capsys, monkeypatch):
+        db_dir = tmp_path_factory.mktemp("db")
+        db_file = str(db_dir / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(dx_repo), "--all", "--db", db_file],
+        )
+        main()
+        from pathlib import Path
+        assert Path(db_file).exists()
+
+    def test_db_with_list_runs(self, tmp_path, capsys, monkeypatch):
+        db_file = str(tmp_path / "test.db")
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", "--list-runs", "--db", db_file],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "No runs found." in captured.out

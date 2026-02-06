@@ -3,7 +3,7 @@ name = "git-xrays"
 version = "0.1.0"
 description = "Behavioral & Architectural Code Intelligence Platform"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = ["duckdb>=1.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]

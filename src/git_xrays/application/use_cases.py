@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from git_xrays.domain.models import (
-    AnemiaReport,
+    AnemicReport,
     AuthorContribution,
     ClusteringReport,
     ClusterSummary,
@@ -11,9 +11,11 @@ from git_xrays.domain.models import (
     ComplexityReport,
     CouplingPair,
     CouplingReport,
+    DXMetrics,
+    DXReport,
     EffortReport,
     FeatureAttribution,
-    FileAnemia,
+    FileAnemic,
     FileChange,
     FileComplexity,
     FileEffort,
@@ -40,6 +42,13 @@ from git_xrays.infrastructure.clustering_engine import (
     silhouette_score as compute_silhouette,
 )
 from git_xrays.infrastructure.complexity_analyzer import analyze_file_complexity
+from git_xrays.infrastructure.dx_engine import (
+    compute_cognitive_load_per_file,
+    compute_dx_score,
+    compute_feedback_delay,
+    compute_focus_ratio,
+    compute_throughput,
+)
 from git_xrays.infrastructure.effort_engine import (
     FEATURE_NAMES,
     build_feature_matrix,
@@ -472,12 +481,12 @@ def analyze_anemia(
     repo_path: str,
     ref: str | None = None,
     ams_threshold: float = 0.5,
-) -> AnemiaReport:
+) -> AnemicReport:
     """Analyze Python files for anemic domain model patterns."""
     py_files = source_reader.list_python_files(ref=ref)
 
     if not py_files:
-        return AnemiaReport(
+        return AnemicReport(
             repo_path=repo_path, ref=ref,
             total_files=0, total_classes=0,
             anemic_count=0, anemic_percentage=0.0,
@@ -496,11 +505,11 @@ def analyze_anemia(
     touch_counts = compute_touch_counts(file_sources)
 
     # Analyze each file
-    file_results: list[FileAnemia] = []
+    file_results: list[FileAnemic] = []
     for fp, source in file_sources.items():
         fa = analyze_file(source, fp, ams_threshold=ams_threshold)
         # Replace touch_count with computed value
-        fa = FileAnemia(
+        fa = FileAnemic(
             file_path=fa.file_path,
             class_count=fa.class_count,
             anemic_class_count=fa.anemic_class_count,
@@ -518,7 +527,7 @@ def analyze_anemia(
     avg_ams = round(sum(all_ams) / len(all_ams), 4) if all_ams else 0.0
     pct = round(anemic_count / total_classes * 100, 1) if total_classes > 0 else 0.0
 
-    return AnemiaReport(
+    return AnemicReport(
         repo_path=repo_path,
         ref=ref,
         total_files=len(file_results),
@@ -826,3 +835,105 @@ def _normalize_matrix(matrix: list[list[float]]) -> list[list[float]]:
         for i in range(n_rows):
             result[i][j] = (matrix[i][j] - lo) / rng if rng != 0 else 0.0
     return result
+
+
+_DEFAULT_DX_WEIGHTS = [0.3, 0.25, 0.25, 0.2]
+
+
+def analyze_dx(
+    repo: GitRepository,
+    source_reader: SourceCodeReader,
+    repo_path: str,
+    window_days: int,
+    current_time: datetime | None = None,
+    weights: list[float] | None = None,
+) -> DXReport:
+    """Compute Developer Experience metrics from existing analyses."""
+    now = current_time or datetime.now(timezone.utc)
+    since = now - timedelta(days=window_days)
+    w = weights or _DEFAULT_DX_WEIGHTS
+
+    # Run sub-analyses
+    hotspot_report = analyze_hotspots(repo, repo_path, window_days, current_time=now)
+    knowledge_report = analyze_knowledge(repo, repo_path, window_days, current_time=now)
+    coupling_report = analyze_coupling(repo, repo_path, window_days, current_time=now)
+    clustering_report = analyze_change_clusters(repo, repo_path, window_days, current_time=now)
+    complexity_report = analyze_complexity(source_reader, repo_path)
+
+    total_commits = hotspot_report.total_commits
+    total_files = len(hotspot_report.files)
+
+    if total_commits == 0:
+        metrics = DXMetrics(
+            throughput=0.0,
+            feedback_delay=0.0,
+            focus_ratio=0.5,
+            cognitive_load=0.0,
+        )
+        return DXReport(
+            repo_path=repo_path,
+            window_days=window_days,
+            from_date=since,
+            to_date=now,
+            total_commits=0,
+            total_files=0,
+            dx_score=0.0,
+            weights=w,
+            metrics=metrics,
+            cognitive_load_files=[],
+        )
+
+    # 1. Throughput
+    throughput = compute_throughput(clustering_report.clusters, window_days)
+
+    # 2. Feedback Delay
+    changes = repo.file_changes(since=since, until=now)
+    file_dates: defaultdict[str, list[datetime]] = defaultdict(list)
+    for c in changes:
+        file_dates[c.file_path].append(c.date)
+    density = compute_commit_density(dict(file_dates))
+
+    densities = [density.get(f.file_path, 1.0) for f in hotspot_report.files]
+    rework_ratios = [f.rework_ratio for f in hotspot_report.files]
+    feedback = compute_feedback_delay(densities, rework_ratios)
+
+    # 3. Focus Ratio
+    focus = compute_focus_ratio(clustering_report.clusters)
+
+    # 4. Cognitive Load
+    cognitive_files = compute_cognitive_load_per_file(
+        hotspot_report.files,
+        knowledge_report.files,
+        coupling_report.file_pain,
+        complexity_report.files,
+    )
+    repo_cognitive_load = (
+        sum(f.composite_load for f in cognitive_files) / len(cognitive_files)
+        if cognitive_files
+        else 0.0
+    )
+
+    metrics = DXMetrics(
+        throughput=round(throughput, 4),
+        feedback_delay=round(feedback, 4),
+        focus_ratio=round(focus, 4),
+        cognitive_load=round(repo_cognitive_load, 4),
+    )
+
+    dx_score = compute_dx_score(
+        metrics.throughput, metrics.feedback_delay,
+        metrics.focus_ratio, metrics.cognitive_load, w,
+    )
+
+    return DXReport(
+        repo_path=repo_path,
+        window_days=window_days,
+        from_date=since,
+        to_date=now,
+        total_commits=total_commits,
+        total_files=total_files,
+        dx_score=round(dx_score, 4),
+        weights=w,
+        metrics=metrics,
+        cognitive_load_files=cognitive_files,
+    )

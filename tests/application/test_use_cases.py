@@ -9,6 +9,7 @@ from git_xrays.application.use_cases import (
     analyze_change_clusters,
     analyze_complexity,
     analyze_coupling,
+    analyze_dx,
     analyze_effort,
     analyze_hotspots,
     analyze_knowledge,
@@ -1545,3 +1546,135 @@ class TestAnalyzeEffort:
         report = analyze_effort(repo, "/repo", 90, current_time=NOW)
         file_map = {f.file_path: f for f in report.files}
         assert file_map["hot.py"].rei_score >= file_map["cold.py"].rei_score
+
+
+class TestAnalyzeDX:
+    def test_empty_repo(self):
+        repo = FakeGitRepository(file_changes_val=[])
+        source_reader = FakeSourceCodeReader({})
+        report = analyze_dx(repo, source_reader, "/repo", 90, current_time=NOW)
+        assert report.total_commits == 0
+        assert report.total_files == 0
+        assert report.dx_score == 0.0
+        assert report.metrics.throughput == 0.0
+        assert report.metrics.feedback_delay == 0.0
+        assert report.metrics.focus_ratio == 0.5
+        assert report.metrics.cognitive_load == 0.0
+
+    def test_basic_repo(self):
+        changes = [
+            _make_change("a.py", "c1", days_ago=5, added=50, deleted=20),
+            _make_change("a.py", "c2", days_ago=10, added=30, deleted=10),
+            _make_change("b.py", "c1", days_ago=5, added=20, deleted=5),
+            _make_change("c.py", "c3", days_ago=15, added=10, deleted=3),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({
+            "a.py": "def process(x):\n    if x:\n        return x\n    return 0\n",
+            "b.py": "def simple(): pass\n",
+            "c.py": "CONST = 1\n",
+        })
+        report = analyze_dx(repo, source_reader, "/repo", 90, current_time=NOW)
+        assert report.total_commits >= 1
+        assert report.total_files >= 1
+        assert report.dx_score >= 0.0
+
+    def test_metrics_in_range(self):
+        changes = [
+            _make_change("a.py", "c1", days_ago=5, added=50, deleted=20),
+            _make_change("b.py", "c2", days_ago=10, added=30, deleted=10),
+            _make_change("c.py", "c3", days_ago=15, added=10, deleted=3),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({
+            "a.py": "def f(): pass\n",
+        })
+        report = analyze_dx(repo, source_reader, "/repo", 90, current_time=NOW)
+        assert 0.0 <= report.metrics.throughput <= 1.0
+        assert 0.0 <= report.metrics.feedback_delay <= 1.0
+        assert 0.0 <= report.metrics.focus_ratio <= 1.0
+        assert 0.0 <= report.metrics.cognitive_load <= 1.0
+
+    def test_dx_score_in_range(self):
+        changes = [
+            _make_change("a.py", "c1", days_ago=5, added=50, deleted=20),
+            _make_change("b.py", "c2", days_ago=10, added=30, deleted=10),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({})
+        report = analyze_dx(repo, source_reader, "/repo", 90, current_time=NOW)
+        assert 0.0 <= report.dx_score <= 1.0
+
+    def test_custom_weights(self):
+        changes = [
+            _make_change("a.py", "c1", days_ago=5, added=50, deleted=20),
+            _make_change("b.py", "c2", days_ago=10, added=30, deleted=10),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({})
+        custom_weights = [0.4, 0.2, 0.2, 0.2]
+        report = analyze_dx(
+            repo, source_reader, "/repo", 90,
+            current_time=NOW, weights=custom_weights,
+        )
+        assert report.weights == custom_weights
+
+    def test_time_travel(self):
+        shifted = NOW - timedelta(days=100)
+        changes = [
+            _make_change("a.py", "c1", days_ago=105, added=50, deleted=20),
+            _make_change("b.py", "c2", days_ago=110, added=30, deleted=10),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({})
+        report = analyze_dx(
+            repo, source_reader, "/repo", 30, current_time=shifted,
+        )
+        assert report.total_commits >= 1
+
+    def test_cognitive_files_sorted(self):
+        changes = [
+            _make_change("hot.py", "c1", days_ago=1, added=200, deleted=100),
+            _make_change("hot.py", "c2", days_ago=2, added=150, deleted=80),
+            _make_change("cold.py", "c3", days_ago=30, added=5, deleted=2),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({})
+        report = analyze_dx(repo, source_reader, "/repo", 90, current_time=NOW)
+        if len(report.cognitive_load_files) >= 2:
+            loads = [f.composite_load for f in report.cognitive_load_files]
+            assert loads == sorted(loads, reverse=True)
+
+    def test_report_metadata(self):
+        changes = [
+            _make_change("a.py", "c1", days_ago=5, added=50, deleted=20),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({})
+        report = analyze_dx(repo, source_reader, "/repo", 90, current_time=NOW)
+        assert report.repo_path == "/repo"
+        assert report.window_days == 90
+        assert report.to_date == NOW
+        assert report.from_date == NOW - timedelta(days=90)
+
+    def test_high_throughput_scenario(self):
+        # Many feature-like commits (high add ratio, many files)
+        changes = []
+        for i in range(20):
+            for f in ["a.py", "b.py", "c.py"]:
+                changes.append(_make_change(f, f"feat{i}", days_ago=i + 1, added=50, deleted=5))
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({})
+        report = analyze_dx(repo, source_reader, "/repo", 90, current_time=NOW)
+        # With many feature commits, throughput should be reasonable
+        assert report.metrics.throughput > 0.0
+
+    def test_window_filtering(self):
+        changes = [
+            _make_change("a.py", "c1", days_ago=5, added=50, deleted=20),
+            _make_change("b.py", "c2", days_ago=60, added=30, deleted=10),  # outside 30d
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        source_reader = FakeSourceCodeReader({})
+        report = analyze_dx(repo, source_reader, "/repo", 30, current_time=NOW)
+        assert report.total_commits == 1

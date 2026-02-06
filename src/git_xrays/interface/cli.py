@@ -8,6 +8,7 @@ from git_xrays.application.use_cases import (
     analyze_change_clusters,
     analyze_complexity,
     analyze_coupling,
+    analyze_dx,
     analyze_effort,
     analyze_hotspots,
     analyze_knowledge,
@@ -33,7 +34,10 @@ def main() -> None:
         prog="analyze-repo",
         description="Behavioral & Architectural Code Intelligence",
     )
-    parser.add_argument("repo_path", help="Path to a local git repository")
+    parser.add_argument(
+        "repo_path", nargs="?", default=None,
+        help="Path to a local git repository",
+    )
     parser.add_argument(
         "--window",
         type=_parse_window,
@@ -72,6 +76,11 @@ def main() -> None:
         help="Show effort modeling analysis (REI scores)",
     )
     parser.add_argument(
+        "--dx",
+        action="store_true",
+        help="Show Developer Experience (DX Core 4) analysis",
+    )
+    parser.add_argument(
         "--at",
         metavar="REF",
         help="Anchor analysis at a commit, tag, branch, or date",
@@ -88,7 +97,39 @@ def main() -> None:
         metavar="REF",
         help="End ref for comparison (requires --from)",
     )
+    parser.add_argument(
+        "--all",
+        dest="run_all",
+        action="store_true",
+        help="Run all analyses, print all output, and store results in DuckDB",
+    )
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default=None,
+        help="DuckDB file path (default: ~/.git-xrays/runs.db)",
+    )
+    parser.add_argument(
+        "--list-runs",
+        action="store_true",
+        help="Show past runs from DuckDB, then exit",
+    )
     args = parser.parse_args()
+
+    # Handle --list-runs early (no repo_path required)
+    if args.list_runs:
+        from git_xrays.infrastructure.run_store import RunStore
+
+        store = RunStore(db_path=args.db)
+        runs = store.list_runs()
+        store.close()
+        _print_runs(runs)
+        return
+
+    # repo_path is required for all other paths
+    if args.repo_path is None:
+        print("Error: repo_path is required", file=sys.stderr)
+        sys.exit(1)
 
     # Validate mutual exclusivity
     if getattr(args, "at", None) and (args.from_ref or args.to_ref):
@@ -99,6 +140,9 @@ def main() -> None:
         sys.exit(1)
     if args.to_ref and not args.from_ref:
         print("Error: --to requires --from", file=sys.stderr)
+        sys.exit(1)
+    if args.run_all and (args.from_ref or args.to_ref):
+        print("Error: --all cannot be combined with --from/--to", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -147,6 +191,11 @@ def main() -> None:
         print(f"Last commit:  {summary.last_commit_date.strftime('%Y-%m-%d %H:%M:%S %z')}")
     else:
         print("No commits found.")
+        return
+
+    # Handle --all: run all 8 analyses, print everything, store in DuckDB
+    if args.run_all:
+        _run_all(args, git_reader, summary, current_time)
         return
 
     # Hotspot analysis
@@ -200,6 +249,135 @@ def main() -> None:
         )
         print()
         _print_effort(effort_report)
+
+    if args.dx:
+        source_reader = GitSourceReader(args.repo_path)
+        dx_report = analyze_dx(
+            git_reader, source_reader, args.repo_path, args.window,
+            current_time=current_time,
+        )
+        print()
+        _print_dx(dx_report)
+
+
+def _run_all(args, git_reader, summary, current_time) -> None:
+    """Run all 8 analyses, print all output, and store in DuckDB."""
+    import uuid
+
+    from git_xrays.infrastructure.run_store import RunStore
+
+    source_reader = GitSourceReader(args.repo_path)
+    ref = args.at if args.at else None
+
+    # 1. Hotspots
+    hotspot_report = analyze_hotspots(
+        git_reader, args.repo_path, args.window, current_time=current_time,
+    )
+    print(f"\n--- Hotspot Analysis (last {hotspot_report.window_days} days, {hotspot_report.total_commits} commits) ---\n")
+    if not hotspot_report.files:
+        print("No file changes found in this window.")
+    else:
+        _print_hotspots(hotspot_report)
+        print()
+        _print_effort_distribution(hotspot_report)
+
+    # 2. Knowledge
+    knowledge_report = analyze_knowledge(
+        git_reader, args.repo_path, args.window, current_time=current_time,
+    )
+    print()
+    _print_knowledge(knowledge_report)
+
+    # 3. Coupling
+    coupling_report = analyze_coupling(
+        git_reader, args.repo_path, args.window, current_time=current_time,
+    )
+    print()
+    _print_coupling(coupling_report)
+    print()
+    _print_pain(coupling_report)
+
+    # 4. Anemia
+    anemia_report = analyze_anemia(source_reader, args.repo_path, ref=ref)
+    print()
+    _print_anemia(anemia_report)
+
+    # 5. Complexity
+    complexity_report = analyze_complexity(source_reader, args.repo_path, ref=ref)
+    print()
+    _print_complexity(complexity_report)
+
+    # 6. Clustering
+    clustering_report = analyze_change_clusters(
+        git_reader, args.repo_path, args.window, current_time=current_time,
+    )
+    print()
+    _print_clustering(clustering_report)
+
+    # 7. Effort
+    effort_report = analyze_effort(
+        git_reader, args.repo_path, args.window, current_time=current_time,
+    )
+    print()
+    _print_effort(effort_report)
+
+    # 8. DX
+    dx_report = analyze_dx(
+        git_reader, source_reader, args.repo_path, args.window,
+        current_time=current_time,
+    )
+    print()
+    _print_dx(dx_report)
+
+    # Store results
+    run_id = str(uuid.uuid4())
+    store = RunStore(db_path=args.db)
+    store.save_run(
+        run_id, args.repo_path, args.window, summary,
+        hotspot_report, knowledge_report, coupling_report,
+        anemia_report, complexity_report, clustering_report,
+        effort_report, dx_report,
+    )
+    store.close()
+    print(f"\nRun stored: {run_id}")
+
+
+def _print_runs(runs: list[dict]) -> None:
+    """Print past runs in a table."""
+    if not runs:
+        print("No runs found.")
+        return
+
+    header = (
+        f"{'Run ID':<36}  "
+        f"{'Repository':<30}  "
+        f"{'Date':<19}  "
+        f"{'Window':>6}  "
+        f"{'Commits':>7}  "
+        f"{'Files':>5}  "
+        f"{'DX':>6}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for r in runs:
+        created = r["created_at"]
+        if hasattr(created, "strftime"):
+            date_str = created.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            date_str = str(created)[:19]
+        repo = r["repo_path"]
+        if len(repo) > 30:
+            repo = "..." + repo[-27:]
+        print(
+            f"{r['run_id']:<36}  "
+            f"{repo:<30}  "
+            f"{date_str:<19}  "
+            f"{r['window_days']:>6}  "
+            f"{r['total_commits']:>7}  "
+            f"{r['hotspot_file_count']:>5}  "
+            f"{r['dx_score']:>6.4f}"
+        )
 
 
 def _print_hotspots(report) -> None:
@@ -613,3 +791,55 @@ def _print_effort(report) -> None:
 
     if len(report.files) > 20:
         print(f"  ... and {len(report.files) - 20} more files")
+
+
+def _print_dx(report) -> None:
+    print(
+        f"--- Developer Experience Analysis "
+        f"(last {report.window_days} days, "
+        f"{report.total_commits} commits, "
+        f"{report.total_files} files) ---\n"
+    )
+
+    print(f"DX Score:            {report.dx_score:.4f}")
+    print()
+    print("Core Metrics:")
+    print(f"  Throughput:        {report.metrics.throughput:.4f}  (weighted commit rate)")
+    print(f"  Feedback Delay:    {report.metrics.feedback_delay:.4f}  (iteration speed)")
+    print(f"  Focus Ratio:       {report.metrics.focus_ratio:.4f}  (feature vs toil)")
+    print(f"  Cognitive Load:    {report.metrics.cognitive_load:.4f}  (lower is better)")
+
+    if not report.cognitive_load_files:
+        return
+
+    print()
+    print("Top Cognitive Load Files:")
+
+    files = report.cognitive_load_files[:10]
+    path_width = min(max(len(f.file_path) for f in files), 40)
+    header = (
+        f"{'File':<{path_width}}  "
+        f"{'Complexity':>10}  "
+        f"{'Coordination':>12}  "
+        f"{'Knowledge':>9}  "
+        f"{'ChangeRate':>10}  "
+        f"{'Load':>6}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for f in files:
+        path = f.file_path
+        if len(path) > path_width:
+            path = "..." + path[-(path_width - 3):]
+        print(
+            f"{path:<{path_width}}  "
+            f"{f.complexity_score:>10.4f}  "
+            f"{f.coordination_score:>12.4f}  "
+            f"{f.knowledge_score:>9.4f}  "
+            f"{f.change_rate_score:>10.4f}  "
+            f"{f.composite_load:>6.4f}"
+        )
+
+    if len(report.cognitive_load_files) > 10:
+        print(f"  ... and {len(report.cognitive_load_files) - 10} more files")
