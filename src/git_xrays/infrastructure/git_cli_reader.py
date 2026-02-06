@@ -48,6 +48,16 @@ class GitCliReader:
             return None
         return datetime.fromisoformat(output)
 
+    def resolve_ref(self, ref: str) -> datetime:
+        """Resolve a git ref (commit, tag, branch) to its author date."""
+        try:
+            output = self._run("log", "-1", "--format=%aI", ref)
+        except RuntimeError:
+            raise ValueError(f"Cannot resolve ref: {ref}")
+        if not output:
+            raise ValueError(f"Cannot resolve ref: {ref}")
+        return datetime.fromisoformat(output.strip())
+
     def file_changes(
         self, since: datetime | None = None, until: datetime | None = None
     ) -> list[FileChange]:

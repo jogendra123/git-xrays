@@ -58,6 +58,7 @@ Inspired by:
 - uv (dependency & environment management)
 - DuckDB (on-disk analytics)
 - Git (CLI + libgit2 bindings)
+- Follow TDD practices
 - Optional: Streamlit / FastAPI (later phase)
 
 ---
@@ -144,16 +145,7 @@ Identify:
 - Single repo, multiple Docker images
 - Shared deployment blast radius
 
----
 
-## 13. Deployment Coupling
-
-- Dockerfile parsing
-- Module → image mapping
-- Deployment Coupling Index (DCI)
-- Blast radius score
-
----
 
 ## 14. PAIN Metric (Vlad Khononov)
 
@@ -286,9 +278,6 @@ Knowledge risk & ownership.
 
 ### Phase 3
 Architectural coupling + PAIN.
-
-### Phase 4
-Docker & deployment coupling.
 
 ### Phase 5
 Time travel & comparisons.

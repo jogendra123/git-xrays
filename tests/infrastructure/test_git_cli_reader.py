@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from git_xrays.application.use_cases import analyze_coupling
+from git_xrays.application.use_cases import analyze_coupling, compare_hotspots
 from git_xrays.infrastructure.git_cli_reader import GitCliReader
 from tests.conftest import commit_file
 
@@ -172,3 +172,97 @@ class TestCouplingIntegration:
         report = analyze_coupling(reader, str(coupled_repo), 90)
         for fp in report.file_pain:
             assert 0.0 <= fp.pain_score <= 1.0
+
+
+class TestResolveRef:
+    def test_resolve_commit_hash(self, git_repo_with_history: Path):
+        reader = GitCliReader(str(git_repo_with_history))
+        # Get HEAD hash
+        result = subprocess.run(
+            ["git", "-C", str(git_repo_with_history), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        head_hash = result.stdout.strip()
+        dt = reader.resolve_ref(head_hash)
+        assert isinstance(dt, datetime)
+        assert dt.tzinfo is not None
+
+    def test_resolve_tag(self, tagged_repo: Path):
+        reader = GitCliReader(str(tagged_repo))
+        dt = reader.resolve_ref("v1.0")
+        assert isinstance(dt, datetime)
+        assert dt.tzinfo is not None
+
+    def test_resolve_branch(self, git_repo_with_history: Path):
+        reader = GitCliReader(str(git_repo_with_history))
+        # Get current branch name dynamically
+        result = subprocess.run(
+            ["git", "-C", str(git_repo_with_history), "branch", "--show-current"],
+            capture_output=True, text=True, check=True,
+        )
+        branch = result.stdout.strip()
+        dt = reader.resolve_ref(branch)
+        assert isinstance(dt, datetime)
+        last = reader.last_commit_date()
+        assert dt == last
+
+    def test_resolve_short_hash(self, git_repo_with_history: Path):
+        reader = GitCliReader(str(git_repo_with_history))
+        result = subprocess.run(
+            ["git", "-C", str(git_repo_with_history), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        short_hash = result.stdout.strip()
+        dt = reader.resolve_ref(short_hash)
+        assert isinstance(dt, datetime)
+
+    def test_resolve_invalid_ref_raises(self, git_repo_with_history: Path):
+        reader = GitCliReader(str(git_repo_with_history))
+        with pytest.raises(ValueError, match="Cannot resolve ref"):
+            reader.resolve_ref("nonexistent_ref_xyz")
+
+
+class TestCompareIntegration:
+    """Integration tests: compare_hotspots with real git repos via GitCliReader."""
+
+    def test_compare_two_tags_produces_report(self, tagged_repo: Path):
+        reader = GitCliReader(str(tagged_repo))
+        report = compare_hotspots(reader, str(tagged_repo), 90, "v1.0", "v2.0")
+        assert report.from_ref == "v1.0"
+        assert report.to_ref == "v2.0"
+        assert len(report.files) > 0
+
+    def test_compare_detects_new_file_after_tag(self, tagged_repo: Path):
+        """utils.py was added after v1.0 → shows as 'new'."""
+        reader = GitCliReader(str(tagged_repo))
+        report = compare_hotspots(reader, str(tagged_repo), 90, "v1.0", "v2.0")
+        utils = [f for f in report.files if f.file_path == "src/utils.py"]
+        assert len(utils) == 1
+        assert utils[0].status == "new"
+
+    def test_compare_detects_increased_churn(self, tagged_repo: Path):
+        """main.py has more activity at v2.0 than v1.0."""
+        reader = GitCliReader(str(tagged_repo))
+        report = compare_hotspots(reader, str(tagged_repo), 90, "v1.0", "v2.0")
+        main = [f for f in report.files if f.file_path == "src/main.py"]
+        assert len(main) == 1
+        assert main[0].to_churn >= main[0].from_churn
+
+    def test_at_tag_matches_manual_time(self, tagged_repo: Path):
+        """--at with tag produces same result as manual current_time."""
+        from git_xrays.application.use_cases import _resolve_ref_to_datetime, analyze_hotspots
+        reader = GitCliReader(str(tagged_repo))
+        tag_time = _resolve_ref_to_datetime("v1.0", reader)
+        report_via_tag = analyze_hotspots(reader, str(tagged_repo), 90, current_time=tag_time)
+        # Resolve the tag date manually and compare
+        report_manual = analyze_hotspots(reader, str(tagged_repo), 90, current_time=reader.resolve_ref("v1.0"))
+        assert report_via_tag.total_commits == report_manual.total_commits
+        assert len(report_via_tag.files) == len(report_manual.files)
+
+    def test_compare_same_tag_all_unchanged(self, tagged_repo: Path):
+        """Comparing a tag to itself → all unchanged."""
+        reader = GitCliReader(str(tagged_repo))
+        report = compare_hotspots(reader, str(tagged_repo), 90, "v1.0", "v1.0")
+        for f in report.files:
+            assert f.status == "unchanged"
+            assert f.score_delta == 0.0

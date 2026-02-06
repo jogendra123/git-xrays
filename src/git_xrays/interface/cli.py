@@ -2,8 +2,20 @@ import argparse
 import re
 import sys
 
-from git_xrays.application.use_cases import analyze_coupling, analyze_hotspots, analyze_knowledge, get_repo_summary
+from git_xrays.application.use_cases import (
+    _resolve_ref_to_datetime,
+    analyze_anemia,
+    analyze_change_clusters,
+    analyze_complexity,
+    analyze_coupling,
+    analyze_effort,
+    analyze_hotspots,
+    analyze_knowledge,
+    compare_hotspots,
+    get_repo_summary,
+)
 from git_xrays.infrastructure.git_cli_reader import GitCliReader
+from git_xrays.infrastructure.git_source_reader import GitSourceReader
 
 
 def _parse_window(value: str) -> int:
@@ -39,13 +51,85 @@ def main() -> None:
         action="store_true",
         help="Show temporal coupling and PAIN analysis",
     )
+    parser.add_argument(
+        "--anemia",
+        action="store_true",
+        help="Show anemic domain model analysis",
+    )
+    parser.add_argument(
+        "--complexity",
+        action="store_true",
+        help="Show function-level complexity analysis",
+    )
+    parser.add_argument(
+        "--clustering",
+        action="store_true",
+        help="Show change clustering analysis",
+    )
+    parser.add_argument(
+        "--effort",
+        action="store_true",
+        help="Show effort modeling analysis (REI scores)",
+    )
+    parser.add_argument(
+        "--at",
+        metavar="REF",
+        help="Anchor analysis at a commit, tag, branch, or date",
+    )
+    parser.add_argument(
+        "--from",
+        dest="from_ref",
+        metavar="REF",
+        help="Start ref for comparison (requires --to)",
+    )
+    parser.add_argument(
+        "--to",
+        dest="to_ref",
+        metavar="REF",
+        help="End ref for comparison (requires --from)",
+    )
     args = parser.parse_args()
+
+    # Validate mutual exclusivity
+    if getattr(args, "at", None) and (args.from_ref or args.to_ref):
+        print("Error: --at cannot be combined with --from/--to", file=sys.stderr)
+        sys.exit(1)
+    if args.from_ref and not args.to_ref:
+        print("Error: --from requires --to", file=sys.stderr)
+        sys.exit(1)
+    if args.to_ref and not args.from_ref:
+        print("Error: --to requires --from", file=sys.stderr)
+        sys.exit(1)
 
     try:
         git_reader = GitCliReader(args.repo_path)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Handle --from/--to comparison mode
+    if args.from_ref and args.to_ref:
+        try:
+            report = compare_hotspots(
+                git_reader, args.repo_path, args.window,
+                args.from_ref, args.to_ref,
+            )
+        except (ValueError, RuntimeError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        _print_comparison(report)
+        return
+
+    # Resolve --at to current_time
+    current_time = None
+    snapshot_info = None
+    if args.at:
+        try:
+            current_time = _resolve_ref_to_datetime(args.at, git_reader)
+            snapshot_info = (args.at, current_time)
+        except (ValueError, RuntimeError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
 
     try:
         summary = get_repo_summary(git_reader, args.repo_path)
@@ -54,6 +138,9 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Repository:   {summary.repo_path}")
+    if snapshot_info:
+        ref_name, ref_date = snapshot_info
+        print(f"Snapshot at:  {ref_name} ({ref_date.strftime('%Y-%m-%d %H:%M:%S %z')})")
     print(f"Commits:      {summary.commit_count}")
     if summary.first_commit_date:
         print(f"First commit: {summary.first_commit_date.strftime('%Y-%m-%d %H:%M:%S %z')}")
@@ -63,7 +150,7 @@ def main() -> None:
         return
 
     # Hotspot analysis
-    report = analyze_hotspots(git_reader, args.repo_path, args.window)
+    report = analyze_hotspots(git_reader, args.repo_path, args.window, current_time=current_time)
 
     print(f"\n--- Hotspot Analysis (last {report.window_days} days, {report.total_commits} commits) ---\n")
 
@@ -75,16 +162,44 @@ def main() -> None:
         _print_effort_distribution(report)
 
     if args.knowledge:
-        knowledge_report = analyze_knowledge(git_reader, args.repo_path, args.window)
+        knowledge_report = analyze_knowledge(git_reader, args.repo_path, args.window, current_time=current_time)
         print()
         _print_knowledge(knowledge_report)
 
     if args.coupling:
-        coupling_report = analyze_coupling(git_reader, args.repo_path, args.window)
+        coupling_report = analyze_coupling(git_reader, args.repo_path, args.window, current_time=current_time)
         print()
         _print_coupling(coupling_report)
         print()
         _print_pain(coupling_report)
+
+    if args.anemia:
+        source_reader = GitSourceReader(args.repo_path)
+        ref = args.at if args.at else None
+        anemia_report = analyze_anemia(source_reader, args.repo_path, ref=ref)
+        print()
+        _print_anemia(anemia_report)
+
+    if args.complexity:
+        source_reader = GitSourceReader(args.repo_path)
+        ref = args.at if args.at else None
+        complexity_report = analyze_complexity(source_reader, args.repo_path, ref=ref)
+        print()
+        _print_complexity(complexity_report)
+
+    if args.clustering:
+        clustering_report = analyze_change_clusters(
+            git_reader, args.repo_path, args.window, current_time=current_time,
+        )
+        print()
+        _print_clustering(clustering_report)
+
+    if args.effort:
+        effort_report = analyze_effort(
+            git_reader, args.repo_path, args.window, current_time=current_time,
+        )
+        print()
+        _print_effort(effort_report)
 
 
 def _print_hotspots(report) -> None:
@@ -255,3 +370,246 @@ def _print_pain(report) -> None:
 
     if len(report.file_pain) > 20:
         print(f"  ... and {len(report.file_pain) - 20} more files")
+
+
+def _print_comparison(report) -> None:
+    print(
+        f"--- Hotspot Comparison: {report.from_ref} → {report.to_ref} "
+        f"({report.window_days}-day window) ---"
+    )
+    print()
+    print(
+        f"From: {report.from_ref} "
+        f"({report.from_date.strftime('%Y-%m-%d %H:%M:%S %z')}) "
+        f"— {report.from_total_commits} commits"
+    )
+    print(
+        f"To:   {report.to_ref} "
+        f"({report.to_date.strftime('%Y-%m-%d %H:%M:%S %z')}) "
+        f"— {report.to_total_commits} commits"
+    )
+    print()
+    print(
+        f"Summary: {report.new_hotspot_count} new, "
+        f"{report.removed_hotspot_count} removed, "
+        f"{report.improved_count} improved, "
+        f"{report.degraded_count} degraded"
+    )
+    print()
+
+    if not report.files:
+        print("No file changes found in either snapshot.")
+        return
+
+    path_width = min(max(len(f.file_path) for f in report.files), 60)
+    header = (
+        f"{'File':<{path_width}}  "
+        f"{'From':>6}  "
+        f"{'To':>6}  "
+        f"{'Delta':>7}  "
+        f"{'Status':<10}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for f in report.files[:20]:
+        path = f.file_path
+        if len(path) > path_width:
+            path = "..." + path[-(path_width - 3):]
+        delta_str = f"{f.score_delta:+.4f}" if f.score_delta != 0 else " 0.0000"
+        print(
+            f"{path:<{path_width}}  "
+            f"{f.from_score:>6.4f}  "
+            f"{f.to_score:>6.4f}  "
+            f"{delta_str:>7}  "
+            f"{f.status:<10}"
+        )
+
+    if len(report.files) > 20:
+        print(f"  ... and {len(report.files) - 20} more files")
+
+
+def _print_anemia(report) -> None:
+    print(
+        f"--- Anemia Analysis "
+        f"({report.total_classes} classes in {report.total_files} files) ---\n"
+    )
+
+    print(f"Total classes:       {report.total_classes}")
+    print(f"Anemic classes:      {report.anemic_count} ({report.anemic_percentage}%)")
+    print(f"Average AMS:         {report.average_ams:.4f}")
+    print()
+
+    if not report.files:
+        print("No Python files found.")
+        return
+
+    path_width = min(max(len(f.file_path) for f in report.files), 60)
+    header = (
+        f"{'File':<{path_width}}  "
+        f"{'Classes':>7}  "
+        f"{'Anemic':>6}  "
+        f"{'Worst AMS':>9}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for f in report.files[:20]:
+        path = f.file_path
+        if len(path) > path_width:
+            path = "..." + path[-(path_width - 3):]
+        print(
+            f"{path:<{path_width}}  "
+            f"{f.class_count:>7}  "
+            f"{f.anemic_class_count:>6}  "
+            f"{f.worst_ams:>9.4f}"
+        )
+
+    if len(report.files) > 20:
+        print(f"  ... and {len(report.files) - 20} more files")
+
+
+def _print_complexity(report) -> None:
+    print(
+        f"--- Complexity Analysis "
+        f"({report.total_functions} functions in {report.total_files} files) ---\n"
+    )
+
+    print(f"Total functions:     {report.total_functions}")
+    print(
+        f"High complexity:     {report.high_complexity_count} "
+        f"(above threshold {report.complexity_threshold})"
+    )
+    print(f"Avg complexity:      {report.avg_complexity:.2f}")
+    print(f"Max complexity:      {report.max_complexity}")
+    print()
+
+    if not report.files:
+        print("No Python files with functions found.")
+        return
+
+    path_width = min(max(len(f.file_path) for f in report.files), 60)
+    header = (
+        f"{'File':<{path_width}}  "
+        f"{'Functions':>9}  "
+        f"{'Max CC':>6}  "
+        f"{'Avg CC':>6}  "
+        f"{'Max Depth':>9}  "
+        f"{'Max Len':>7}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for f in report.files[:20]:
+        path = f.file_path
+        if len(path) > path_width:
+            path = "..." + path[-(path_width - 3):]
+        print(
+            f"{path:<{path_width}}  "
+            f"{f.function_count:>9}  "
+            f"{f.max_complexity:>6}  "
+            f"{f.avg_complexity:>6.2f}  "
+            f"{f.max_nesting:>9}  "
+            f"{f.max_length:>7}"
+        )
+
+    if len(report.files) > 20:
+        print(f"  ... and {len(report.files) - 20} more files")
+
+
+def _print_clustering(report) -> None:
+    print(
+        f"--- Clustering Analysis "
+        f"(last {report.window_days} days, {report.total_commits} commits) ---\n"
+    )
+
+    if not report.clusters:
+        print("No commits found in this window.")
+        return
+
+    print(f"Clusters:        {report.k}")
+    print(f"Silhouette:      {report.silhouette_score:.4f}")
+    print()
+
+    header = (
+        f"{'Label':<15}  "
+        f"{'Size':>4}  "
+        f"{'Avg Files':>9}  "
+        f"{'Avg Churn':>9}  "
+        f"{'Add Ratio':>9}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for c in report.clusters:
+        print(
+            f"{c.label:<15}  "
+            f"{c.size:>4}  "
+            f"{c.centroid_file_count:>9.1f}  "
+            f"{c.centroid_total_churn:>9.1f}  "
+            f"{c.centroid_add_ratio:>9.2f}"
+        )
+
+    if report.drift:
+        print()
+        print("--- Cluster Drift (first half vs second half) ---\n")
+
+        drift_header = (
+            f"{'Label':<15}  "
+            f"{'1st Half':>8}  "
+            f"{'2nd Half':>8}  "
+            f"{'Drift':>6}  "
+            f"{'Trend':<10}"
+        )
+        print(drift_header)
+        print("-" * len(drift_header))
+
+        for d in report.drift:
+            drift_str = f"{d.drift:+.1f}" if d.drift != 0 else "  0.0"
+            print(
+                f"{d.cluster_label:<15}  "
+                f"{d.first_half_pct:>7.1f}%  "
+                f"{d.second_half_pct:>7.1f}%  "
+                f"{drift_str:>6}  "
+                f"{d.trend:<10}"
+            )
+
+
+def _print_effort(report) -> None:
+    print(
+        f"--- Effort Analysis "
+        f"(last {report.window_days} days, {report.total_files} files) ---\n"
+    )
+
+    print(f"Model R²:        {report.model_r_squared:.4f}")
+    print(f"Alpha:           {report.alpha}")
+    print()
+
+    if not report.files:
+        print("No files found in this window.")
+        return
+
+    path_width = min(max(len(f.file_path) for f in report.files), 60)
+    header = (
+        f"{'File':<{path_width}}  "
+        f"{'REI':>6}  "
+        f"{'Proxy':>6}  "
+        f"{'Top Factor':<25}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for f in report.files[:20]:
+        path = f.file_path
+        if len(path) > path_width:
+            path = "..." + path[-(path_width - 3):]
+        top_factor = f.attributions[0].feature_name if f.attributions else ""
+        print(
+            f"{path:<{path_width}}  "
+            f"{f.rei_score:>6.4f}  "
+            f"{f.proxy_label:>6.4f}  "
+            f"{top_factor:<25}"
+        )
+
+    if len(report.files) > 20:
+        print(f"  ... and {len(report.files) - 20} more files")

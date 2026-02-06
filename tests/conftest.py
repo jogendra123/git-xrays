@@ -151,6 +151,212 @@ def commit_files(
     )
 
 
+def create_tag(repo: Path, tag_name: str) -> None:
+    """Create a lightweight tag at the current HEAD."""
+    subprocess.run(
+        ["git", "-C", str(repo), "tag", tag_name],
+        capture_output=True, check=True,
+    )
+
+
+@pytest.fixture
+def tagged_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with tags for time-travel testing.
+
+    Timeline:
+    - 60 days ago: README.md
+    - 50 days ago: src/main.py → tag v1.0
+    - 30 days ago: update main.py
+    - 20 days ago: add utils.py
+    - 10 days ago: update main.py → tag v2.0
+    """
+    commit_file(tmp_git_repo, "README.md", "# Project\n", "Init README", days_ago=60)
+    commit_file(tmp_git_repo, "src/main.py", "print('v1')\n", "Add main", days_ago=50)
+    create_tag(tmp_git_repo, "v1.0")
+    commit_file(tmp_git_repo, "src/main.py", "print('v2')\n", "Update main", days_ago=30)
+    commit_file(tmp_git_repo, "src/utils.py", "def helper(): pass\n", "Add utils", days_ago=20)
+    commit_file(tmp_git_repo, "src/main.py", "print('v3')\n", "Update main again", days_ago=10)
+    create_tag(tmp_git_repo, "v2.0")
+    return tmp_git_repo
+
+
+@pytest.fixture
+def anemia_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with a mix of anemic and healthy Python classes.
+
+    - models.py: UserDTO (anemic - data only + getters)
+    - services.py: UserService (healthy - logic methods)
+    - README.md: non-Python file (should be excluded)
+    """
+    commit_file(
+        tmp_git_repo, "models.py",
+        (
+            "class UserDTO:\n"
+            "    name = ''\n"
+            "    email = ''\n"
+            "    age = 0\n"
+            "    def get_name(self):\n"
+            "        return self.name\n"
+            "    def get_email(self):\n"
+            "        return self.email\n"
+        ),
+        "Add anemic models",
+        days_ago=10,
+    )
+    commit_file(
+        tmp_git_repo, "services.py",
+        (
+            "import models\n"
+            "\n"
+            "class UserService:\n"
+            "    def validate(self, user):\n"
+            "        if not user:\n"
+            "            raise ValueError('invalid')\n"
+            "    def process(self, items):\n"
+            "        for item in items:\n"
+            "            print(item)\n"
+        ),
+        "Add healthy services",
+        days_ago=5,
+    )
+    commit_file(
+        tmp_git_repo, "README.md",
+        "# Project\n",
+        "Add readme",
+        days_ago=3,
+    )
+    return tmp_git_repo
+
+
+@pytest.fixture
+def complexity_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with Python files of varying complexity.
+
+    - simple.py: one simple function (CC=1)
+    - complex.py: one complex function with multiple branches (CC>1)
+    - README.md: non-Python file (should be excluded)
+    """
+    commit_file(
+        tmp_git_repo, "simple.py",
+        (
+            "def greet(name):\n"
+            "    return f'Hello {name}'\n"
+        ),
+        "Add simple module",
+        days_ago=10,
+    )
+    commit_file(
+        tmp_git_repo, "complex.py",
+        (
+            "def process(data, mode):\n"
+            "    if not data:\n"
+            "        return None\n"
+            "    for item in data:\n"
+            "        if mode == 'strict':\n"
+            "            if item.valid:\n"
+            "                yield item\n"
+            "        elif mode == 'lenient':\n"
+            "            yield item\n"
+        ),
+        "Add complex module",
+        days_ago=5,
+    )
+    commit_file(
+        tmp_git_repo, "README.md",
+        "# Project\n",
+        "Add readme",
+        days_ago=3,
+    )
+    return tmp_git_repo
+
+
+@pytest.fixture
+def clustering_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with diverse commit patterns for clustering analysis.
+
+    - 3 feature-like commits: many files, high additions
+    - 3 bugfix-like commits: 1 file, low churn
+    - 2 refactoring-like commits: many files, balanced add/delete
+    """
+    # Feature-like: many files, high additions
+    commit_files(tmp_git_repo, {
+        "src/feature1.py": "class Feature1:\n    pass\n",
+        "src/feature2.py": "class Feature2:\n    pass\n",
+        "src/feature3.py": "class Feature3:\n    pass\n",
+        "src/feature4.py": "class Feature4:\n    pass\n",
+    }, "feat: add feature module", days_ago=40)
+    commit_files(tmp_git_repo, {
+        "src/feature1.py": "class Feature1:\n    def run(self):\n        pass\n",
+        "src/feature2.py": "class Feature2:\n    def run(self):\n        pass\n",
+        "src/feature3.py": "class Feature3:\n    def run(self):\n        pass\n",
+    }, "feat: add run methods", days_ago=35)
+    commit_files(tmp_git_repo, {
+        "src/feature1.py": "class Feature1:\n    def run(self):\n        return 42\n",
+        "src/feature2.py": "class Feature2:\n    def run(self):\n        return 43\n",
+        "src/feature3.py": "class Feature3:\n    def run(self):\n        return 44\n",
+        "src/feature4.py": "class Feature4:\n    def run(self):\n        return 45\n",
+    }, "feat: implement run", days_ago=30)
+
+    # Bugfix-like: single file, low churn
+    commit_file(tmp_git_repo, "src/feature1.py",
+                "class Feature1:\n    def run(self):\n        return 42  # fix\n",
+                "fix: correct return value", days_ago=25)
+    commit_file(tmp_git_repo, "src/feature2.py",
+                "class Feature2:\n    def run(self):\n        return 43  # fix\n",
+                "fix: correct feature2", days_ago=20)
+    commit_file(tmp_git_repo, "src/feature3.py",
+                "class Feature3:\n    def run(self):\n        return 44  # fix\n",
+                "fix: correct feature3", days_ago=15)
+
+    # Refactoring-like: many files, balanced add/delete
+    commit_files(tmp_git_repo, {
+        "src/feature1.py": "class Feature1Refactored:\n    def execute(self):\n        return 42\n",
+        "src/feature2.py": "class Feature2Refactored:\n    def execute(self):\n        return 43\n",
+        "src/feature3.py": "class Feature3Refactored:\n    def execute(self):\n        return 44\n",
+    }, "refactor: rename classes and methods", days_ago=10)
+    commit_files(tmp_git_repo, {
+        "src/feature1.py": "class Feature1Final:\n    def execute(self):\n        result = 42\n        return result\n",
+        "src/feature4.py": "class Feature4Final:\n    def execute(self):\n        result = 45\n        return result\n",
+    }, "refactor: finalize implementations", days_ago=5)
+
+    return tmp_git_repo
+
+
+@pytest.fixture
+def effort_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with 5 files, ~8 commits, diverse effort patterns.
+
+    - hot.py: high churn, high frequency (3 commits, 2 authors)
+    - mod.py: moderate churn (2 commits)
+    - cold.py: low churn (1 commit)
+    - coupled_a.py + coupled_b.py: always committed together (2 commits)
+    """
+    commit_file(tmp_git_repo, "hot.py", "print('v1')\n" * 10,
+                "Create hot module", days_ago=30,
+                author_name="Alice", author_email="alice@example.com")
+    commit_file(tmp_git_repo, "hot.py", "print('v2')\n" * 10,
+                "Update hot module", days_ago=20,
+                author_name="Bob", author_email="bob@example.com")
+    commit_file(tmp_git_repo, "hot.py", "print('v3')\n" * 10,
+                "Fix hot module", days_ago=10,
+                author_name="Alice", author_email="alice@example.com")
+    commit_file(tmp_git_repo, "mod.py", "def moderate(): pass\n",
+                "Add moderate module", days_ago=25)
+    commit_file(tmp_git_repo, "mod.py", "def moderate():\n    return 42\n",
+                "Update moderate module", days_ago=15)
+    commit_file(tmp_git_repo, "cold.py", "CONST = 1\n",
+                "Add cold module", days_ago=40)
+    commit_files(tmp_git_repo, {
+        "coupled_a.py": "import coupled_b\n",
+        "coupled_b.py": "data = []\n",
+    }, "Add coupled modules", days_ago=20)
+    commit_files(tmp_git_repo, {
+        "coupled_a.py": "import coupled_b\nresult = coupled_b.data\n",
+        "coupled_b.py": "data = [1, 2, 3]\n",
+    }, "Update coupled modules", days_ago=5)
+    return tmp_git_repo
+
+
 @pytest.fixture
 def coupled_repo(tmp_git_repo: Path) -> Path:
     """Create a repo for coupling analysis.
