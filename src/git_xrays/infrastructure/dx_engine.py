@@ -18,6 +18,9 @@ from git_xrays.domain.models import (
     FileMetrics,
     FilePain,
 )
+from git_xrays.infrastructure.effort_engine import (
+    _min_max_normalize as _min_max_norm,
+)
 
 # Label weights for throughput calculation
 _LABEL_WEIGHTS: dict[str, float] = {
@@ -188,13 +191,3 @@ def compute_dx_score(
     )
 
 
-def _min_max_norm(values: dict[str, float]) -> dict[str, float]:
-    """Min-max normalize dict values to [0, 1]."""
-    if not values:
-        return {}
-    vals = list(values.values())
-    lo, hi = min(vals), max(vals)
-    rng = hi - lo
-    if rng == 0:
-        return {k: 0.0 for k in values}
-    return {k: (v - lo) / rng for k, v in values.items()}

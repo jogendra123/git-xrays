@@ -29,6 +29,76 @@ def _parse_window(value: str) -> int:
     return int(match.group(1))
 
 
+def _error_exit(msg: str) -> None:
+    """Print error message to stderr and exit with code 1."""
+    print(f"Error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _header_fmt(fmt_spec: str) -> str:
+    """Extract header-safe format from a value format spec.
+
+    E.g. ">7.4f" → ">7", "<25" → "<25", ">6.2f" → ">6".
+    Strips trailing type char and precision so it works for str headers.
+    """
+    # Remove trailing type characters (d, f, %)
+    stripped = fmt_spec.rstrip("df%")
+    # Remove precision (.N)
+    dot = stripped.find(".")
+    if dot != -1:
+        stripped = stripped[:dot]
+    return stripped
+
+
+def _print_table(rows, columns, limit=20, path_attr="file_path", max_path=60, suffix="files") -> None:
+    """Generic table printer.
+
+    Args:
+        rows: list of objects to print.
+        columns: list of (header, format_spec, value_fn) tuples.
+            - header: column header string
+            - format_spec: value format string like ">6" or ">7.4f".
+              Use None for the path column (auto-computed).
+            - value_fn: callable(row) -> value to format, or None for path column.
+        limit: max rows to print.
+        path_attr: attribute name for the file path on each row.
+        max_path: max path column width.
+        suffix: word used in "... and N more {suffix}" message.
+    """
+    if not rows:
+        return
+
+    # Compute path width from all rows (not just displayed ones)
+    path_width = min(max(len(getattr(r, path_attr)) for r in rows), max_path)
+
+    # Build header
+    parts = []
+    for header, fmt_spec, _value_fn in columns:
+        if fmt_spec is None:
+            parts.append(f"{header:<{path_width}}")
+        else:
+            parts.append(f"{header:{_header_fmt(fmt_spec)}}")
+    header_line = "  ".join(parts)
+    print(header_line)
+    print("-" * len(header_line))
+
+    # Print rows
+    for r in rows[:limit]:
+        parts = []
+        for _header, fmt_spec, value_fn in columns:
+            if fmt_spec is None:
+                path = getattr(r, path_attr)
+                if len(path) > path_width:
+                    path = "..." + path[-(path_width - 3):]
+                parts.append(f"{path:<{path_width}}")
+            else:
+                parts.append(f"{value_fn(r):{fmt_spec}}")
+        print("  ".join(parts))
+
+    if len(rows) > limit:
+        print(f"  ... and {len(rows) - limit} more {suffix}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="analyze-repo",
@@ -143,39 +213,31 @@ def main() -> None:
         try:
             from git_xrays.web.server import launch
         except ImportError:
-            print(
-                "Error: web dependencies not installed. "
-                "Run: pip install git-xrays[web]",
-                file=sys.stderr,
+            _error_exit(
+                "web dependencies not installed. "
+                "Run: pip install git-xrays[web]"
             )
-            sys.exit(1)
         launch(db_path=args.db, api_port=args.port)
         return
 
     # repo_path is required for all other paths
     if args.repo_path is None:
-        print("Error: repo_path is required", file=sys.stderr)
-        sys.exit(1)
+        _error_exit("repo_path is required")
 
     # Validate mutual exclusivity
     if getattr(args, "at", None) and (args.from_ref or args.to_ref):
-        print("Error: --at cannot be combined with --from/--to", file=sys.stderr)
-        sys.exit(1)
+        _error_exit("--at cannot be combined with --from/--to")
     if args.from_ref and not args.to_ref:
-        print("Error: --from requires --to", file=sys.stderr)
-        sys.exit(1)
+        _error_exit("--from requires --to")
     if args.to_ref and not args.from_ref:
-        print("Error: --to requires --from", file=sys.stderr)
-        sys.exit(1)
+        _error_exit("--to requires --from")
     if args.run_all and (args.from_ref or args.to_ref):
-        print("Error: --all cannot be combined with --from/--to", file=sys.stderr)
-        sys.exit(1)
+        _error_exit("--all cannot be combined with --from/--to")
 
     try:
         git_reader = GitCliReader(args.repo_path)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        _error_exit(str(e))
 
     # Handle --from/--to comparison mode
     if args.from_ref and args.to_ref:
@@ -185,8 +247,7 @@ def main() -> None:
                 args.from_ref, args.to_ref,
             )
         except (ValueError, RuntimeError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
+            _error_exit(str(e))
         _print_comparison(report)
         return
 
@@ -198,14 +259,12 @@ def main() -> None:
             current_time = _resolve_ref_to_datetime(args.at, git_reader)
             snapshot_info = (args.at, current_time)
         except (ValueError, RuntimeError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
+            _error_exit(str(e))
 
     try:
         summary = get_repo_summary(git_reader, args.repo_path)
     except Exception as e:
-        print(f"Error reading repository: {e}", file=sys.stderr)
-        sys.exit(1)
+        _error_exit(f"reading repository: {e}")
 
     print(f"Repository:   {summary.repo_path}")
     if snapshot_info:
@@ -407,32 +466,16 @@ def _print_runs(runs: list[dict]) -> None:
 
 
 def _print_hotspots(report) -> None:
-    # Column widths
-    path_width = min(max(len(f.file_path) for f in report.files), 60)
-    header = (
-        f"{'File':<{path_width}}  "
-        f"{'Freq':>4}  "
-        f"{'Churn':>6}  "
-        f"{'Hotspot':>7}  "
-        f"{'Rework':>6}"
+    _print_table(
+        report.files,
+        [
+            ("File", None, None),
+            ("Freq", ">4", lambda f: f.change_frequency),
+            ("Churn", ">6", lambda f: f.code_churn),
+            ("Hotspot", ">7.4f", lambda f: f.hotspot_score),
+            ("Rework", ">6.2f", lambda f: f.rework_ratio),
+        ],
     )
-    print(header)
-    print("-" * len(header))
-
-    for f in report.files[:20]:
-        path = f.file_path
-        if len(path) > path_width:
-            path = "..." + path[-(path_width - 3):]
-        print(
-            f"{path:<{path_width}}  "
-            f"{f.change_frequency:>4}  "
-            f"{f.code_churn:>6}  "
-            f"{f.hotspot_score:>7.4f}  "
-            f"{f.rework_ratio:>6.2f}"
-        )
-
-    if len(report.files) > 20:
-        print(f"  ... and {len(report.files) - 20} more files")
 
 
 def _print_effort_distribution(report) -> None:
@@ -471,37 +514,17 @@ def _print_knowledge(report) -> None:
         print("No file changes found in this window.")
         return
 
-    path_width = min(max(len(f.file_path) for f in report.files), 60)
-    header = (
-        f"{'File':<{path_width}}  "
-        f"{'Concentration':>13}  "
-        f"{'Primary Author':<20}  "
-        f"{'Pct':>5}  "
-        f"{'Authors':>7}  "
-        f"{'Island':>6}"
+    _print_table(
+        report.files,
+        [
+            ("File", None, None),
+            ("Concentration", ">13.4f", lambda f: f.knowledge_concentration),
+            ("Primary Author", "<20", lambda f: (f.primary_author[:17] + "...") if len(f.primary_author) > 20 else f.primary_author),
+            ("Pct", ">5.0%", lambda f: f.primary_author_pct),
+            ("Authors", ">7", lambda f: f.author_count),
+            ("Island", ">6", lambda f: "Yes" if f.is_knowledge_island else "No"),
+        ],
     )
-    print(header)
-    print("-" * len(header))
-
-    for f in report.files[:20]:
-        path = f.file_path
-        if len(path) > path_width:
-            path = "..." + path[-(path_width - 3):]
-        island_str = "Yes" if f.is_knowledge_island else "No"
-        author = f.primary_author
-        if len(author) > 20:
-            author = author[:17] + "..."
-        print(
-            f"{path:<{path_width}}  "
-            f"{f.knowledge_concentration:>13.4f}  "
-            f"{author:<20}  "
-            f"{f.primary_author_pct:>5.0%}  "
-            f"{f.author_count:>7}  "
-            f"{island_str:>6}"
-        )
-
-    if len(report.files) > 20:
-        print(f"  ... and {len(report.files) - 20} more files")
 
 
 def _print_coupling(report) -> None:
@@ -549,31 +572,16 @@ def _print_pain(report) -> None:
         print("No files found in this window.")
         return
 
-    path_width = min(max(len(fp.file_path) for fp in report.file_pain), 60)
-    header = (
-        f"{'File':<{path_width}}  "
-        f"{'Size':>6}  "
-        f"{'Volatility':>10}  "
-        f"{'Distance':>8}  "
-        f"{'PAIN':>6}"
+    _print_table(
+        report.file_pain,
+        [
+            ("File", None, None),
+            ("Size", ">6.4f", lambda fp: fp.size_normalized),
+            ("Volatility", ">10.4f", lambda fp: fp.volatility_normalized),
+            ("Distance", ">8.4f", lambda fp: fp.distance_normalized),
+            ("PAIN", ">6.4f", lambda fp: fp.pain_score),
+        ],
     )
-    print(header)
-    print("-" * len(header))
-
-    for fp in report.file_pain[:20]:
-        path = fp.file_path
-        if len(path) > path_width:
-            path = "..." + path[-(path_width - 3):]
-        print(
-            f"{path:<{path_width}}  "
-            f"{fp.size_normalized:>6.4f}  "
-            f"{fp.volatility_normalized:>10.4f}  "
-            f"{fp.distance_normalized:>8.4f}  "
-            f"{fp.pain_score:>6.4f}"
-        )
-
-    if len(report.file_pain) > 20:
-        print(f"  ... and {len(report.file_pain) - 20} more files")
 
 
 def _print_comparison(report) -> None:
@@ -605,32 +613,16 @@ def _print_comparison(report) -> None:
         print("No file changes found in either snapshot.")
         return
 
-    path_width = min(max(len(f.file_path) for f in report.files), 60)
-    header = (
-        f"{'File':<{path_width}}  "
-        f"{'From':>6}  "
-        f"{'To':>6}  "
-        f"{'Delta':>7}  "
-        f"{'Status':<10}"
+    _print_table(
+        report.files,
+        [
+            ("File", None, None),
+            ("From", ">6.4f", lambda f: f.from_score),
+            ("To", ">6.4f", lambda f: f.to_score),
+            ("Delta", ">7", lambda f: f"{f.score_delta:+.4f}" if f.score_delta != 0 else " 0.0000"),
+            ("Status", "<10", lambda f: f.status),
+        ],
     )
-    print(header)
-    print("-" * len(header))
-
-    for f in report.files[:20]:
-        path = f.file_path
-        if len(path) > path_width:
-            path = "..." + path[-(path_width - 3):]
-        delta_str = f"{f.score_delta:+.4f}" if f.score_delta != 0 else " 0.0000"
-        print(
-            f"{path:<{path_width}}  "
-            f"{f.from_score:>6.4f}  "
-            f"{f.to_score:>6.4f}  "
-            f"{delta_str:>7}  "
-            f"{f.status:<10}"
-        )
-
-    if len(report.files) > 20:
-        print(f"  ... and {len(report.files) - 20} more files")
 
 
 def _print_anemia(report) -> None:
@@ -648,29 +640,15 @@ def _print_anemia(report) -> None:
         print("No Python files found.")
         return
 
-    path_width = min(max(len(f.file_path) for f in report.files), 60)
-    header = (
-        f"{'File':<{path_width}}  "
-        f"{'Classes':>7}  "
-        f"{'Anemic':>6}  "
-        f"{'Worst AMS':>9}"
+    _print_table(
+        report.files,
+        [
+            ("File", None, None),
+            ("Classes", ">7", lambda f: f.class_count),
+            ("Anemic", ">6", lambda f: f.anemic_class_count),
+            ("Worst AMS", ">9.4f", lambda f: f.worst_ams),
+        ],
     )
-    print(header)
-    print("-" * len(header))
-
-    for f in report.files[:20]:
-        path = f.file_path
-        if len(path) > path_width:
-            path = "..." + path[-(path_width - 3):]
-        print(
-            f"{path:<{path_width}}  "
-            f"{f.class_count:>7}  "
-            f"{f.anemic_class_count:>6}  "
-            f"{f.worst_ams:>9.4f}"
-        )
-
-    if len(report.files) > 20:
-        print(f"  ... and {len(report.files) - 20} more files")
 
 
 def _print_complexity(report) -> None:
@@ -692,33 +670,17 @@ def _print_complexity(report) -> None:
         print("No Python files with functions found.")
         return
 
-    path_width = min(max(len(f.file_path) for f in report.files), 60)
-    header = (
-        f"{'File':<{path_width}}  "
-        f"{'Functions':>9}  "
-        f"{'Max CC':>6}  "
-        f"{'Avg CC':>6}  "
-        f"{'Max Depth':>9}  "
-        f"{'Max Len':>7}"
+    _print_table(
+        report.files,
+        [
+            ("File", None, None),
+            ("Functions", ">9", lambda f: f.function_count),
+            ("Max CC", ">6", lambda f: f.max_complexity),
+            ("Avg CC", ">6.2f", lambda f: f.avg_complexity),
+            ("Max Depth", ">9", lambda f: f.max_nesting),
+            ("Max Len", ">7", lambda f: f.max_length),
+        ],
     )
-    print(header)
-    print("-" * len(header))
-
-    for f in report.files[:20]:
-        path = f.file_path
-        if len(path) > path_width:
-            path = "..." + path[-(path_width - 3):]
-        print(
-            f"{path:<{path_width}}  "
-            f"{f.function_count:>9}  "
-            f"{f.max_complexity:>6}  "
-            f"{f.avg_complexity:>6.2f}  "
-            f"{f.max_nesting:>9}  "
-            f"{f.max_length:>7}"
-        )
-
-    if len(report.files) > 20:
-        print(f"  ... and {len(report.files) - 20} more files")
 
 
 def _print_clustering(report) -> None:
@@ -793,30 +755,15 @@ def _print_effort(report) -> None:
         print("No files found in this window.")
         return
 
-    path_width = min(max(len(f.file_path) for f in report.files), 60)
-    header = (
-        f"{'File':<{path_width}}  "
-        f"{'REI':>6}  "
-        f"{'Proxy':>6}  "
-        f"{'Top Factor':<25}"
+    _print_table(
+        report.files,
+        [
+            ("File", None, None),
+            ("REI", ">6.4f", lambda f: f.rei_score),
+            ("Proxy", ">6.4f", lambda f: f.proxy_label),
+            ("Top Factor", "<25", lambda f: f.attributions[0].feature_name if f.attributions else ""),
+        ],
     )
-    print(header)
-    print("-" * len(header))
-
-    for f in report.files[:20]:
-        path = f.file_path
-        if len(path) > path_width:
-            path = "..." + path[-(path_width - 3):]
-        top_factor = f.attributions[0].feature_name if f.attributions else ""
-        print(
-            f"{path:<{path_width}}  "
-            f"{f.rei_score:>6.4f}  "
-            f"{f.proxy_label:>6.4f}  "
-            f"{top_factor:<25}"
-        )
-
-    if len(report.files) > 20:
-        print(f"  ... and {len(report.files) - 20} more files")
 
 
 def _print_dx(report) -> None:
@@ -841,31 +788,16 @@ def _print_dx(report) -> None:
     print()
     print("Top Cognitive Load Files:")
 
-    files = report.cognitive_load_files[:10]
-    path_width = min(max(len(f.file_path) for f in files), 40)
-    header = (
-        f"{'File':<{path_width}}  "
-        f"{'Complexity':>10}  "
-        f"{'Coordination':>12}  "
-        f"{'Knowledge':>9}  "
-        f"{'ChangeRate':>10}  "
-        f"{'Load':>6}"
+    _print_table(
+        report.cognitive_load_files,
+        [
+            ("File", None, None),
+            ("Complexity", ">10.4f", lambda f: f.complexity_score),
+            ("Coordination", ">12.4f", lambda f: f.coordination_score),
+            ("Knowledge", ">9.4f", lambda f: f.knowledge_score),
+            ("ChangeRate", ">10.4f", lambda f: f.change_rate_score),
+            ("Load", ">6.4f", lambda f: f.composite_load),
+        ],
+        limit=10,
+        max_path=40,
     )
-    print(header)
-    print("-" * len(header))
-
-    for f in files:
-        path = f.file_path
-        if len(path) > path_width:
-            path = "..." + path[-(path_width - 3):]
-        print(
-            f"{path:<{path_width}}  "
-            f"{f.complexity_score:>10.4f}  "
-            f"{f.coordination_score:>12.4f}  "
-            f"{f.knowledge_score:>9.4f}  "
-            f"{f.change_rate_score:>10.4f}  "
-            f"{f.composite_load:>6.4f}"
-        )
-
-    if len(report.cognitive_load_files) > 10:
-        print(f"  ... and {len(report.cognitive_load_files) - 10} more files")

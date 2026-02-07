@@ -173,6 +173,16 @@ class RunStore:
             )
         """)
 
+    def _insert_rows(self, table: str, run_id: str, records, fields_fn) -> None:
+        """Insert multiple rows into a child table."""
+        for rec in records:
+            fields = fields_fn(rec)
+            placeholders = ", ".join(["?"] * (1 + len(fields)))
+            self._conn.execute(
+                f"INSERT INTO {table} VALUES ({placeholders})",  # noqa: S608
+                [run_id] + fields,
+            )
+
     def save_run(
         self,
         run_id: str,
@@ -248,91 +258,48 @@ class RunStore:
                 ],
             )
 
-            # Hotspot files
-            for f in hotspot.files:
-                self._conn.execute(
-                    "INSERT INTO hotspot_files VALUES (?, ?, ?, ?, ?, ?)",
-                    [run_id, f.file_path, f.change_frequency, f.code_churn,
-                     f.hotspot_score, f.rework_ratio],
-                )
+            self._insert_rows("hotspot_files", run_id, hotspot.files, lambda f: [
+                f.file_path, f.change_frequency, f.code_churn,
+                f.hotspot_score, f.rework_ratio])
 
-            # Knowledge files
-            for f in knowledge.files:
-                self._conn.execute(
-                    "INSERT INTO knowledge_files VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [run_id, f.file_path, f.knowledge_concentration,
-                     f.primary_author, f.primary_author_pct,
-                     f.is_knowledge_island, f.author_count],
-                )
+            self._insert_rows("knowledge_files", run_id, knowledge.files, lambda f: [
+                f.file_path, f.knowledge_concentration, f.primary_author,
+                f.primary_author_pct, f.is_knowledge_island, f.author_count])
 
-            # Coupling pairs
-            for p in coupling.coupling_pairs:
-                self._conn.execute(
-                    "INSERT INTO coupling_pairs VALUES (?, ?, ?, ?, ?, ?)",
-                    [run_id, p.file_a, p.file_b, p.shared_commits,
-                     p.coupling_strength, p.support],
-                )
+            self._insert_rows("coupling_pairs", run_id, coupling.coupling_pairs, lambda p: [
+                p.file_a, p.file_b, p.shared_commits,
+                p.coupling_strength, p.support])
 
-            # File pain
-            for fp in coupling.file_pain:
-                self._conn.execute(
-                    "INSERT INTO file_pain VALUES (?, ?, ?, ?, ?, ?)",
-                    [run_id, fp.file_path, fp.size_normalized,
-                     fp.volatility_normalized, fp.distance_normalized,
-                     fp.pain_score],
-                )
+            self._insert_rows("file_pain", run_id, coupling.file_pain, lambda fp: [
+                fp.file_path, fp.size_normalized, fp.volatility_normalized,
+                fp.distance_normalized, fp.pain_score])
 
-            # Anemia classes
-            for fa in anemia.files:
-                for cm in fa.classes:
-                    self._conn.execute(
-                        "INSERT INTO anemia_classes VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        [run_id, cm.file_path, cm.class_name, cm.field_count,
-                         cm.behavior_method_count, cm.dbsi, cm.ams],
-                    )
+            # Flatten nested: files → classes
+            self._insert_rows("anemia_classes", run_id,
+                [cm for fa in anemia.files for cm in fa.classes], lambda cm: [
+                cm.file_path, cm.class_name, cm.field_count,
+                cm.behavior_method_count, cm.dbsi, cm.ams])
 
-            # Complexity functions
-            for fc in complexity.files:
-                for fn in fc.functions:
-                    self._conn.execute(
-                        "INSERT INTO complexity_functions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        [run_id, fn.file_path, fn.function_name, fn.line_number,
-                         fn.cyclomatic_complexity, fn.max_nesting_depth,
-                         fn.length],
-                    )
+            # Flatten nested: files → functions
+            self._insert_rows("complexity_functions", run_id,
+                [fn for fc in complexity.files for fn in fc.functions], lambda fn: [
+                fn.file_path, fn.function_name, fn.line_number,
+                fn.cyclomatic_complexity, fn.max_nesting_depth, fn.length])
 
-            # Cluster summaries
-            for cs in clustering.clusters:
-                self._conn.execute(
-                    "INSERT INTO cluster_summaries VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [run_id, cs.cluster_id, cs.label, cs.size,
-                     cs.centroid_file_count, cs.centroid_total_churn,
-                     cs.centroid_add_ratio],
-                )
+            self._insert_rows("cluster_summaries", run_id, clustering.clusters, lambda cs: [
+                cs.cluster_id, cs.label, cs.size, cs.centroid_file_count,
+                cs.centroid_total_churn, cs.centroid_add_ratio])
 
-            # Cluster drift
-            for cd in clustering.drift:
-                self._conn.execute(
-                    "INSERT INTO cluster_drift VALUES (?, ?, ?, ?, ?, ?)",
-                    [run_id, cd.cluster_label, cd.first_half_pct,
-                     cd.second_half_pct, cd.drift, cd.trend],
-                )
+            self._insert_rows("cluster_drift", run_id, clustering.drift, lambda cd: [
+                cd.cluster_label, cd.first_half_pct, cd.second_half_pct,
+                cd.drift, cd.trend])
 
-            # Effort files
-            for ef in effort.files:
-                self._conn.execute(
-                    "INSERT INTO effort_files VALUES (?, ?, ?, ?)",
-                    [run_id, ef.file_path, ef.rei_score, ef.proxy_label],
-                )
+            self._insert_rows("effort_files", run_id, effort.files, lambda ef: [
+                ef.file_path, ef.rei_score, ef.proxy_label])
 
-            # DX cognitive files
-            for df in dx.cognitive_load_files:
-                self._conn.execute(
-                    "INSERT INTO dx_cognitive_files VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [run_id, df.file_path, df.complexity_score,
-                     df.coordination_score, df.knowledge_score,
-                     df.change_rate_score, df.composite_load],
-                )
+            self._insert_rows("dx_cognitive_files", run_id, dx.cognitive_load_files, lambda df: [
+                df.file_path, df.complexity_score, df.coordination_score,
+                df.knowledge_score, df.change_rate_score, df.composite_load])
 
             self._conn.commit()
         except Exception:
