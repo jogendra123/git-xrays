@@ -26,7 +26,7 @@ class RunDetail(BaseModel):
     first_commit_date: datetime | None
     last_commit_date: datetime | None
     hotspot_file_count: int
-    developer_risk_index: int
+    developer_risk_index: float
     knowledge_island_count: int
     coupling_pair_count: int
     anemia_total_classes: int
@@ -57,6 +57,7 @@ class HotspotFile(BaseModel):
     code_churn: int
     hotspot_score: float
     rework_ratio: float
+    file_size: int
 
 
 class KnowledgeFile(BaseModel):
@@ -76,6 +77,8 @@ class CouplingPairRow(BaseModel):
     shared_commits: int
     coupling_strength: float
     support: float
+    expected_cochange: float
+    lift: float
 
 
 class FilePainRow(BaseModel):
@@ -103,6 +106,7 @@ class ComplexityFnRow(BaseModel):
     function_name: str
     line_number: int
     cyclomatic_complexity: int
+    cognitive_complexity: int
     max_nesting_depth: int
     length: int
 

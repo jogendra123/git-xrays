@@ -32,8 +32,9 @@ class FileMetrics:
     file_path: str
     change_frequency: int  # number of commits that touched this file
     code_churn: int  # total lines added + deleted
-    hotspot_score: float  # normalized(churn) * normalized(frequency)
-    rework_ratio: float  # (frequency - 1) / frequency
+    hotspot_score: float  # normalized(relative_churn) * normalized(frequency)
+    rework_ratio: float  # fraction of commits within 14 days of prior touch
+    file_size: int  # current file size in bytes (0 if unknown)
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,7 @@ class KnowledgeReport:
     from_date: datetime
     to_date: datetime
     total_commits: int
-    developer_risk_index: int
+    developer_risk_index: float
     knowledge_island_count: int
     files: list[FileKnowledge]  # sorted by knowledge_concentration descending
 
@@ -97,6 +98,8 @@ class CouplingPair:
     total_commits: int  # total unique commits in repo window
     coupling_strength: float  # Jaccard: shared / union
     support: float  # shared / total_commits
+    expected_cochange: float  # (commits_A/total)*(commits_B/total)*total
+    lift: float  # shared / expected_cochange (>1 = stronger than random)
 
 
 @dataclass(frozen=True)
@@ -216,6 +219,7 @@ class FunctionComplexity:
     line_number: int
     length: int                    # end_lineno - lineno + 1
     cyclomatic_complexity: int     # 1 + decision points
+    cognitive_complexity: int      # SonarSource cognitive complexity
     max_nesting_depth: int
     branch_count: int              # ast.If node count
     exception_paths: int           # ast.ExceptHandler count
@@ -235,6 +239,8 @@ class FileComplexity:
     max_length: int
     avg_nesting: float
     max_nesting: int
+    avg_cognitive: float
+    max_cognitive: int
     functions: list[FunctionComplexity]  # sorted by cyclomatic_complexity desc
 
 
@@ -252,6 +258,8 @@ class ComplexityReport:
     complexity_threshold: int      # default 10
     avg_length: float
     max_length: int
+    avg_cognitive: float
+    max_cognitive: int
     files: list[FileComplexity]    # sorted by max_complexity desc
 
 

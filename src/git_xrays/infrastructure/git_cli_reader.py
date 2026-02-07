@@ -58,6 +58,26 @@ class GitCliReader:
             raise ValueError(f"Cannot resolve ref: {ref}")
         return datetime.fromisoformat(output.strip())
 
+    def file_sizes(self, ref: str | None = None) -> dict[str, int]:
+        """Return mapping of file path → size in bytes using git ls-tree."""
+        tree_ref = ref or "HEAD"
+        try:
+            output = self._run("ls-tree", "-r", "-l", tree_ref)
+        except RuntimeError:
+            return {}
+        result: dict[str, int] = {}
+        for line in output.splitlines():
+            # Format: <mode> <type> <hash> <size>\t<path>
+            parts = line.split(None, 4)
+            if len(parts) < 5:
+                continue
+            size_str = parts[3]
+            file_path = parts[4]
+            if size_str == "-":
+                continue
+            result[file_path] = int(size_str)
+        return result
+
     def file_changes(
         self, since: datetime | None = None, until: datetime | None = None
     ) -> list[FileChange]:

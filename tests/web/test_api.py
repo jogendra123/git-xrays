@@ -41,14 +41,14 @@ _SINCE = datetime(2024, 10, 17, 12, 0, 0, tzinfo=timezone.utc)
 def _make_all_reports():
     summary = RepoSummary("/repo", 42, datetime(2024, 1, 1, tzinfo=timezone.utc), _NOW)
     hotspot = HotspotReport("/repo", 90, _SINCE, _NOW, 10, [
-        FileMetrics("src/a.py", 5, 100, 1.0, 0.8),
-        FileMetrics("src/b.py", 3, 60, 0.36, 0.6667),
+        FileMetrics("src/a.py", 5, 100, 1.0, 0.8, 500),
+        FileMetrics("src/b.py", 3, 60, 0.36, 0.6667, 300),
     ])
-    knowledge = KnowledgeReport("/repo", 90, _SINCE, _NOW, 10, 2, 1, [
+    knowledge = KnowledgeReport("/repo", 90, _SINCE, _NOW, 10, 0.3, 1, [
         FileKnowledge("src/a.py", 0.85, "Alice", 0.9, True, 2, []),
     ])
     coupling = CouplingReport("/repo", 90, _SINCE, _NOW, 10, [
-        CouplingPair("src/a.py", "src/b.py", 3, 10, 0.75, 0.3),
+        CouplingPair("src/a.py", "src/b.py", 3, 10, 0.75, 0.3, 1.5, 2.0),
     ], [
         FilePain("src/a.py", 100, 1.0, 5, 1.0, 0.75, 1.0, 1.0),
     ])
@@ -57,10 +57,10 @@ def _make_all_reports():
             ClassMetrics("UserDTO", "src/a.py", 3, 2, 0, 0, 0, 1.0, 0.0, 1.0, 0.75),
         ], 2),
     ])
-    complexity = ComplexityReport("/repo", None, 1, 2, 3.5, 5, 0, 10, 8.0, 12, [
-        FileComplexity("src/a.py", 2, 7, 3.5, 5, "process", 8.0, 12, 2.0, 3, [
-            FunctionComplexity("process", "src/a.py", None, 1, 12, 5, 3, 2, 1),
-            FunctionComplexity("helper", "src/a.py", None, 14, 4, 2, 1, 1, 0),
+    complexity = ComplexityReport("/repo", None, 1, 2, 3.5, 5, 0, 10, 8.0, 12, 0.0, 0, [
+        FileComplexity("src/a.py", 2, 7, 3.5, 5, "process", 8.0, 12, 2.0, 3, 0.0, 0, [
+            FunctionComplexity("process", "src/a.py", None, 1, 12, 5, 0, 3, 2, 1),
+            FunctionComplexity("helper", "src/a.py", None, 14, 4, 2, 0, 1, 1, 0),
         ]),
     ])
     clustering = ClusteringReport("/repo", 90, _SINCE, _NOW, 10, 2, 0.65, [

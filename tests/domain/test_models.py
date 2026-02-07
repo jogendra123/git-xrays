@@ -92,7 +92,7 @@ class TestFileMetrics:
     def test_creation(self):
         fm = FileMetrics(
             file_path="a.py", change_frequency=5, code_churn=100,
-            hotspot_score=0.75, rework_ratio=0.8,
+            hotspot_score=0.75, rework_ratio=0.8, file_size=0,
         )
         assert fm.file_path == "a.py"
         assert fm.change_frequency == 5
@@ -103,7 +103,7 @@ class TestFileMetrics:
     def test_frozen(self):
         fm = FileMetrics(
             file_path="a.py", change_frequency=1, code_churn=10,
-            hotspot_score=1.0, rework_ratio=0.0,
+            hotspot_score=1.0, rework_ratio=0.0, file_size=0,
         )
         with __import__("pytest").raises(dataclasses.FrozenInstanceError):
             fm.hotspot_score = 0.5  # type: ignore[misc]
@@ -114,7 +114,7 @@ class TestHotspotReport:
         dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
         fm = FileMetrics(
             file_path="a.py", change_frequency=2, code_churn=50,
-            hotspot_score=1.0, rework_ratio=0.5,
+            hotspot_score=1.0, rework_ratio=0.5, file_size=0,
         )
         report = HotspotReport(
             repo_path="/repo", window_days=90,
@@ -197,13 +197,13 @@ class TestKnowledgeReport:
         report = KnowledgeReport(
             repo_path="/repo", window_days=90,
             from_date=dt, to_date=dt,
-            total_commits=10, developer_risk_index=2,
+            total_commits=10, developer_risk_index=0.3,
             knowledge_island_count=1, files=[],
         )
         assert report.repo_path == "/repo"
         assert report.window_days == 90
         assert report.total_commits == 10
-        assert report.developer_risk_index == 2
+        assert report.developer_risk_index == 0.3
         assert report.knowledge_island_count == 1
         assert report.files == []
 
@@ -212,11 +212,11 @@ class TestKnowledgeReport:
         report = KnowledgeReport(
             repo_path="/repo", window_days=90,
             from_date=dt, to_date=dt,
-            total_commits=0, developer_risk_index=0,
+            total_commits=0, developer_risk_index=0.0,
             knowledge_island_count=0, files=[],
         )
         with __import__("pytest").raises(dataclasses.FrozenInstanceError):
-            report.developer_risk_index = 5  # type: ignore[misc]
+            report.developer_risk_index = 0.5  # type: ignore[misc]
 
 
 class TestCouplingPair:
@@ -225,6 +225,7 @@ class TestCouplingPair:
             file_a="a.py", file_b="b.py",
             shared_commits=3, total_commits=10,
             coupling_strength=0.75, support=0.3,
+            expected_cochange=1.5, lift=2.0,
         )
         assert cp.file_a == "a.py"
         assert cp.file_b == "b.py"
@@ -232,12 +233,15 @@ class TestCouplingPair:
         assert cp.total_commits == 10
         assert cp.coupling_strength == 0.75
         assert cp.support == 0.3
+        assert cp.expected_cochange == 1.5
+        assert cp.lift == 2.0
 
     def test_frozen(self):
         cp = CouplingPair(
             file_a="a.py", file_b="b.py",
             shared_commits=1, total_commits=5,
             coupling_strength=0.5, support=0.2,
+            expected_cochange=1.0, lift=1.0,
         )
         with __import__("pytest").raises(dataclasses.FrozenInstanceError):
             cp.coupling_strength = 0.0  # type: ignore[misc]
@@ -247,6 +251,7 @@ class TestCouplingPair:
             file_a="x.py", file_b="y.py",
             shared_commits=5, total_commits=5,
             coupling_strength=1.0, support=1.0,
+            expected_cochange=5.0, lift=1.0,
         )
         assert cp.coupling_strength == 1.0
         assert cp.support == 1.0
@@ -324,6 +329,7 @@ class TestCouplingReport:
             file_a="a.py", file_b="b.py",
             shared_commits=3, total_commits=5,
             coupling_strength=0.75, support=0.6,
+            expected_cochange=1.5, lift=2.0,
         )
         pain = FilePain(
             file_path="a.py",
@@ -550,6 +556,7 @@ class TestFunctionComplexity:
             line_number=10,
             length=25,
             cyclomatic_complexity=8,
+            cognitive_complexity=0,
             max_nesting_depth=3,
             branch_count=4,
             exception_paths=1,
@@ -568,6 +575,7 @@ class TestFunctionComplexity:
         fc = FunctionComplexity(
             function_name="f", file_path="a.py", class_name=None,
             line_number=1, length=1, cyclomatic_complexity=1,
+            cognitive_complexity=0,
             max_nesting_depth=0, branch_count=0, exception_paths=0,
         )
         with __import__("pytest").raises(dataclasses.FrozenInstanceError):
@@ -581,6 +589,7 @@ class TestFunctionComplexity:
             line_number=15,
             length=10,
             cyclomatic_complexity=3,
+            cognitive_complexity=0,
             max_nesting_depth=1,
             branch_count=2,
             exception_paths=0,
@@ -594,6 +603,7 @@ class TestFileComplexity:
         func = FunctionComplexity(
             function_name="process", file_path="svc.py", class_name=None,
             line_number=1, length=10, cyclomatic_complexity=5,
+            cognitive_complexity=0,
             max_nesting_depth=2, branch_count=3, exception_paths=1,
         )
         fc = FileComplexity(
@@ -607,6 +617,8 @@ class TestFileComplexity:
             max_length=10,
             avg_nesting=2.0,
             max_nesting=2,
+            avg_cognitive=0.0,
+            max_cognitive=0,
             functions=[func],
         )
         assert fc.file_path == "svc.py"
@@ -626,6 +638,7 @@ class TestFileComplexity:
             file_path="a.py", function_count=0, total_complexity=0,
             avg_complexity=0.0, max_complexity=0, worst_function="",
             avg_length=0.0, max_length=0, avg_nesting=0.0, max_nesting=0,
+            avg_cognitive=0.0, max_cognitive=0,
             functions=[],
         )
         with __import__("pytest").raises(dataclasses.FrozenInstanceError):
@@ -636,6 +649,7 @@ class TestFileComplexity:
             file_path="empty.py", function_count=0, total_complexity=0,
             avg_complexity=0.0, max_complexity=0, worst_function="",
             avg_length=0.0, max_length=0, avg_nesting=0.0, max_nesting=0,
+            avg_cognitive=0.0, max_cognitive=0,
             functions=[],
         )
         assert fc.functions == []
@@ -655,6 +669,8 @@ class TestComplexityReport:
             complexity_threshold=10,
             avg_length=12.0,
             max_length=45,
+            avg_cognitive=0.0,
+            max_cognitive=0,
             files=[],
         )
         assert report.repo_path == "/repo"
@@ -673,7 +689,8 @@ class TestComplexityReport:
         report = ComplexityReport(
             repo_path="/repo", ref=None, total_files=0, total_functions=0,
             avg_complexity=0.0, max_complexity=0, high_complexity_count=0,
-            complexity_threshold=10, avg_length=0.0, max_length=0, files=[],
+            complexity_threshold=10, avg_length=0.0, max_length=0,
+            avg_cognitive=0.0, max_cognitive=0, files=[],
         )
         with __import__("pytest").raises(dataclasses.FrozenInstanceError):
             report.total_functions = 99  # type: ignore[misc]
@@ -682,7 +699,8 @@ class TestComplexityReport:
         report = ComplexityReport(
             repo_path="/repo", ref="v1.0", total_files=0, total_functions=0,
             avg_complexity=0.0, max_complexity=0, high_complexity_count=0,
-            complexity_threshold=10, avg_length=0.0, max_length=0, files=[],
+            complexity_threshold=10, avg_length=0.0, max_length=0,
+            avg_cognitive=0.0, max_cognitive=0, files=[],
         )
         assert report.ref == "v1.0"
 

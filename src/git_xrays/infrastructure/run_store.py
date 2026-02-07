@@ -36,7 +36,7 @@ class RunStore:
                 first_commit_date   TIMESTAMP,
                 last_commit_date    TIMESTAMP,
                 hotspot_file_count       INTEGER NOT NULL,
-                developer_risk_index     INTEGER NOT NULL,
+                developer_risk_index     DOUBLE NOT NULL,
                 knowledge_island_count   INTEGER NOT NULL,
                 coupling_pair_count      INTEGER NOT NULL,
                 anemia_total_classes     INTEGER NOT NULL,
@@ -68,6 +68,7 @@ class RunStore:
                 code_churn       INTEGER NOT NULL,
                 hotspot_score    DOUBLE NOT NULL,
                 rework_ratio     DOUBLE NOT NULL,
+                file_size        INTEGER NOT NULL,
                 PRIMARY KEY (run_id, file_path)
             )
         """)
@@ -91,6 +92,8 @@ class RunStore:
                 shared_commits    INTEGER NOT NULL,
                 coupling_strength DOUBLE NOT NULL,
                 support           DOUBLE NOT NULL,
+                expected_cochange DOUBLE NOT NULL,
+                lift              DOUBLE NOT NULL,
                 PRIMARY KEY (run_id, file_a, file_b)
             )
         """)
@@ -124,6 +127,7 @@ class RunStore:
                 function_name VARCHAR NOT NULL,
                 line_number   INTEGER NOT NULL,
                 cyclomatic_complexity INTEGER NOT NULL,
+                cognitive_complexity  INTEGER NOT NULL,
                 max_nesting_depth     INTEGER NOT NULL,
                 length                INTEGER NOT NULL,
                 PRIMARY KEY (run_id, file_path, function_name, line_number)
@@ -260,7 +264,7 @@ class RunStore:
 
             self._insert_rows("hotspot_files", run_id, hotspot.files, lambda f: [
                 f.file_path, f.change_frequency, f.code_churn,
-                f.hotspot_score, f.rework_ratio])
+                f.hotspot_score, f.rework_ratio, f.file_size])
 
             self._insert_rows("knowledge_files", run_id, knowledge.files, lambda f: [
                 f.file_path, f.knowledge_concentration, f.primary_author,
@@ -268,7 +272,7 @@ class RunStore:
 
             self._insert_rows("coupling_pairs", run_id, coupling.coupling_pairs, lambda p: [
                 p.file_a, p.file_b, p.shared_commits,
-                p.coupling_strength, p.support])
+                p.coupling_strength, p.support, p.expected_cochange, p.lift])
 
             self._insert_rows("file_pain", run_id, coupling.file_pain, lambda fp: [
                 fp.file_path, fp.size_normalized, fp.volatility_normalized,
@@ -284,7 +288,8 @@ class RunStore:
             self._insert_rows("complexity_functions", run_id,
                 [fn for fc in complexity.files for fn in fc.functions], lambda fn: [
                 fn.file_path, fn.function_name, fn.line_number,
-                fn.cyclomatic_complexity, fn.max_nesting_depth, fn.length])
+                fn.cyclomatic_complexity, fn.cognitive_complexity,
+                fn.max_nesting_depth, fn.length])
 
             self._insert_rows("cluster_summaries", run_id, clustering.clusters, lambda cs: [
                 cs.cluster_id, cs.label, cs.size, cs.centroid_file_count,

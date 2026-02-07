@@ -129,9 +129,9 @@ def compute_cognitive_load_per_file(
     raw_change_rate: dict[str, float] = {}
 
     for fp in all_paths:
-        # Complexity: avg_complexity from ComplexityReport
+        # Complexity: avg_cognitive from ComplexityReport
         cx = cx_map.get(fp)
-        raw_complexity[fp] = cx.avg_complexity if cx else 0.0
+        raw_complexity[fp] = cx.avg_cognitive if cx else 0.0
 
         # Coordination: distance_normalized from FilePain
         p = pain_map.get(fp)

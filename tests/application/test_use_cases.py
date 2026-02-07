@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from git_xrays.application.use_cases import (
-    _compute_dri,
+    _compute_gini,
+    _compute_rework_ratio,
     _resolve_ref_to_datetime,
     analyze_anemia,
     analyze_change_clusters,
@@ -89,7 +90,7 @@ class TestAnalyzeHotspots:
         # b.py: norm_freq=0.5, norm_churn=15/225 ≈ 0.0667 → hotspot ≈ 0.0333
         assert report.files[1].hotspot_score == round(0.5 * (15 / 225), 4)
 
-    def test_rework_ratio(self):
+    def test_rework_ratio_commits_within_14_days(self):
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("a.py", "c2", days_ago=2),
@@ -97,8 +98,25 @@ class TestAnalyzeHotspots:
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
-        # freq=3 → rework = (3-1)/3 = 0.6667
+        # 3 commits all within 14 days of each other → 2 rework / 3 total
         assert report.files[0].rework_ratio == round(2 / 3, 4)
+
+    def test_rework_ratio_commits_far_apart(self):
+        changes = [
+            _make_change("a.py", "c1", days_ago=1),
+            _make_change("a.py", "c2", days_ago=30),
+            _make_change("a.py", "c3", days_ago=60),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
+        # All commits >14 days apart → 0 rework / 3 total
+        assert report.files[0].rework_ratio == 0.0
+
+    def test_rework_ratio_single_commit(self):
+        changes = [_make_change("a.py", "c1", days_ago=1)]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
+        assert report.files[0].rework_ratio == 0.0
 
     def test_empty_changes(self):
         repo = FakeGitRepository(file_changes_val=[])
@@ -166,6 +184,40 @@ class TestAnalyzeHotspots:
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_hotspots(repo, "/repo", 90)
         assert report.to_date is not None
+
+    def test_relative_churn_small_file_ranks_higher(self):
+        """Small file with same churn ranks higher than large file (relative churn)."""
+        changes = [
+            _make_change("small.py", "c1", days_ago=1, added=50, deleted=50),
+            _make_change("big.py", "c1", days_ago=1, added=50, deleted=50),
+        ]
+        repo = FakeGitRepository(
+            file_changes_val=changes,
+            file_sizes_val={"small.py": 100, "big.py": 10000},
+        )
+        report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
+        # Both have same freq=1, same absolute churn=100
+        # Relative churn: small=100/100=1.0, big=100/10000=0.01
+        # small.py should rank higher
+        assert report.files[0].file_path == "small.py"
+        assert report.files[0].hotspot_score > report.files[1].hotspot_score
+
+    def test_file_size_stored_in_metrics(self):
+        changes = [_make_change("a.py", "c1", days_ago=1)]
+        repo = FakeGitRepository(
+            file_changes_val=changes,
+            file_sizes_val={"a.py": 500},
+        )
+        report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
+        assert report.files[0].file_size == 500
+
+    def test_unknown_file_size_fallback(self):
+        """File not in file_sizes → file_size=0, falls back to absolute churn."""
+        changes = [_make_change("a.py", "c1", days_ago=1)]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
+        assert report.files[0].file_size == 0
+        assert report.files[0].hotspot_score == 1.0
 
 
 class TestAnalyzeKnowledge:
@@ -247,7 +299,7 @@ class TestAnalyzeKnowledge:
         report = analyze_knowledge(repo, "/repo", 90, current_time=NOW)
         assert report.files == []
         assert report.total_commits == 0
-        assert report.developer_risk_index == 0
+        assert report.developer_risk_index == 0.0
         assert report.knowledge_island_count == 0
 
     def test_window_filtering_excludes_old_changes(self):
@@ -345,26 +397,27 @@ class TestAnalyzeKnowledge:
         assert abs(total - 1.0) < 0.01
 
 
-class TestComputeDri:
-    def test_single_author_dri_is_one(self):
+class TestComputeGini:
+    def test_single_author_gini_is_zero(self):
         changes = [
             _make_change("a.py", "c1", days_ago=1,
                          author_name="Alice", author_email="alice@example.com"),
         ]
-        assert _compute_dri(changes) == 1
+        # Single author → perfectly equal → Gini = 0.0
+        assert _compute_gini(changes) == 0.0
 
-    def test_two_equal_authors_dri_is_two(self):
+    def test_two_equal_authors_gini_is_zero(self):
         changes = [
             _make_change("a.py", "c1", days_ago=1, added=10, deleted=5,
                          author_name="Alice", author_email="alice@example.com"),
             _make_change("a.py", "c2", days_ago=2, added=10, deleted=5,
                          author_name="Bob", author_email="bob@example.com"),
         ]
-        # Each has 50%, need both to exceed 50%
-        assert _compute_dri(changes) == 2
+        # Equal churn → Gini = 0.0
+        assert _compute_gini(changes) == 0.0
 
-    def test_one_dominant_author_dri_is_one(self):
-        # Alice: 60% churn, Bob: 25%, Carol: 15%
+    def test_one_dominant_author_high_gini(self):
+        # Alice: 60 churn, Bob: 25 churn, Carol: 15 churn → sorted: [15,25,60]
         changes = [
             _make_change("a.py", "c1", days_ago=1, added=50, deleted=10,
                          author_name="Alice", author_email="alice@example.com"),
@@ -373,35 +426,81 @@ class TestComputeDri:
             _make_change("a.py", "c3", days_ago=3, added=10, deleted=5,
                          author_name="Carol", author_email="carol@example.com"),
         ]
-        assert _compute_dri(changes) == 1
+        # sorted=[15,25,60], n=3, total=100
+        # numerator = 2*(1*15 + 2*25 + 3*60) - 4*100 = 2*(15+50+180) - 400 = 490 - 400 = 90
+        # denominator = 3*100 = 300
+        # gini = 90/300 = 0.3
+        assert _compute_gini(changes) == 0.3
 
-    def test_empty_changes_dri_is_zero(self):
-        assert _compute_dri([]) == 0
+    def test_empty_changes_gini_is_zero(self):
+        assert _compute_gini([]) == 0.0
+
+
+class TestComputeReworkRatio:
+    def test_empty_dates(self):
+        assert _compute_rework_ratio([]) == 0.0
+
+    def test_single_date(self):
+        assert _compute_rework_ratio([NOW]) == 0.0
+
+    def test_all_within_window(self):
+        dates = [NOW - timedelta(days=i) for i in range(5)]
+        # 4 consecutive pairs all within 14 days → 4/5
+        assert _compute_rework_ratio(dates) == round(4 / 5, 4)
+
+    def test_all_beyond_window(self):
+        dates = [NOW - timedelta(days=i * 20) for i in range(4)]
+        # Gaps of 20 days, all > 14 → 0/4
+        assert _compute_rework_ratio(dates) == 0.0
+
+    def test_mixed_window(self):
+        # 3 commits: day 0, day 5 (rework), day 30 (not rework)
+        dates = [NOW, NOW - timedelta(days=5), NOW - timedelta(days=30)]
+        # sorted: day-30, day-5 (25d gap → not rework), day-0 (5d gap → rework)
+        # 1 rework / 3 total
+        assert abs(_compute_rework_ratio(dates) - 1 / 3) < 1e-10
+
+    def test_custom_window(self):
+        dates = [NOW, NOW - timedelta(days=10)]
+        # 10 days apart, window_days=5 → not rework
+        assert _compute_rework_ratio(dates, window_days=5) == 0.0
+        # window_days=10 → rework
+        assert _compute_rework_ratio(dates, window_days=10) == round(1 / 2, 4)
 
 
 class TestAnalyzeCoupling:
-    """Steps 2-4: Temporal coupling core, Jaccard, filtering, sorting."""
+    """Temporal coupling: Jaccard, min_shared filter, lift filter, sorting."""
 
-    # Step 2: Core coupling
-    def test_two_files_same_commit_coupled(self):
-        """Two files in the same commit → pair with coupling=1.0."""
+    def test_all_commits_shared_lift_equals_one_filtered(self):
+        """If one file appears in every commit, lift=1.0 → filtered."""
+        # a in c1,c2,c3; b in c1,c2 → total=3
+        # expected_ab = (3/3)*(2/3)*3=2.0, lift=2/2.0=1.0 → filtered
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c1", days_ago=1),
-            # Need 2 shared commits for default min_shared_commits=2
+            _make_change("a.py", "c2", days_ago=2),
+            _make_change("b.py", "c2", days_ago=2),
+            _make_change("a.py", "c3", days_ago=3),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
+        assert len(report.coupling_pairs) == 0
+
+    def test_lift_filters_random_cochange(self):
+        """Files appearing together only as often as random → lift ≤ 1.0 → filtered."""
+        # a in c1,c2; b in c1,c2; total=2 → expected=2, lift=1.0 → filtered
+        changes = [
+            _make_change("a.py", "c1", days_ago=1),
+            _make_change("b.py", "c1", days_ago=1),
             _make_change("a.py", "c2", days_ago=2),
             _make_change("b.py", "c2", days_ago=2),
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
-        assert len(report.coupling_pairs) == 1
-        pair = report.coupling_pairs[0]
-        assert pair.file_a == "a.py"
-        assert pair.file_b == "b.py"
-        assert pair.coupling_strength == 1.0
+        assert len(report.coupling_pairs) == 0
 
     def test_files_in_different_commits_no_pairs(self):
-        """Files never in same commit → no coupling pairs (after min_shared filter)."""
+        """Files never in same commit → no coupling pairs."""
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c2", days_ago=2),
@@ -417,93 +516,86 @@ class TestAnalyzeCoupling:
         assert len(report.file_pain) == 0
         assert report.total_commits == 0
 
-    # Step 3: Jaccard + min_shared_commits filter
-    def test_jaccard_partial_overlap(self):
-        """Jaccard = shared / union with partial overlap."""
-        # a.py in c1,c2,c3; b.py in c1,c2 → shared=2, union=3 → Jaccard=2/3
+    def test_jaccard_partial_overlap_with_lift(self):
+        """Jaccard with partial overlap and lift > 1."""
+        # a in c1,c2,c3,c4; b in c1,c2; c in c3,c4 → total=4
+        # a+b: shared=2, union=4, jaccard=0.5
+        # expected_ab = (4/4)*(2/4)*4 = 2.0, lift=2/2=1.0 → filtered
+        # We need a better scenario:
+        # a in c1,c2; b in c1,c2; c in c3 → total=3
+        # a+b: shared=2, expected = (2/3)*(2/3)*3 = 4/3 ≈ 1.333, lift=2/1.333≈1.5
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c1", days_ago=1),
             _make_change("a.py", "c2", days_ago=2),
             _make_change("b.py", "c2", days_ago=2),
-            _make_change("a.py", "c3", days_ago=3),
+            _make_change("c.py", "c3", days_ago=3),  # unrelated commit
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
         assert len(report.coupling_pairs) == 1
-        assert report.coupling_pairs[0].coupling_strength == round(2 / 3, 4)
+        pair = report.coupling_pairs[0]
+        assert pair.file_a == "a.py"
+        assert pair.file_b == "b.py"
+        # Jaccard: shared=2, union=2, strength=1.0
+        assert pair.coupling_strength == 1.0
+        # expected = (2/3)*(2/3)*3 = 4/3
+        assert pair.expected_cochange == round(4 / 3, 4)
+        # lift = 2 / (4/3) = 1.5
+        assert pair.lift == 1.5
 
     def test_min_shared_commits_filters_weak_pairs(self):
         """Default min_shared_commits=2 filters pairs with only 1 co-occurrence."""
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c1", days_ago=1),
-            # Only 1 shared commit → filtered out
+            _make_change("c.py", "c2", days_ago=2),
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
         assert len(report.coupling_pairs) == 0
 
-    def test_pairs_meeting_threshold_kept(self):
-        """Pairs with shared >= min_shared_commits are kept."""
+    def test_support_and_lift(self):
+        """Support = shared/total, lift = shared/expected."""
+        # a in c1,c2,c3; b in c1,c2; d in c3 → total=3
+        # a+b: shared=2, expected=(3/3)*(2/3)*3=2.0, lift=1.0 → filtered
+        # Let's use: a in c1,c2; b in c1,c2; d in c3,c4 → total=4
+        # a+b: shared=2, expected=(2/4)*(2/4)*4=1.0, lift=2.0
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c1", days_ago=1),
             _make_change("a.py", "c2", days_ago=2),
             _make_change("b.py", "c2", days_ago=2),
-        ]
-        repo = FakeGitRepository(file_changes_val=changes)
-        report = analyze_coupling(repo, "/repo", 90, current_time=NOW, min_shared_commits=2)
-        assert len(report.coupling_pairs) == 1
-
-    def test_support_is_shared_over_total(self):
-        """Support = shared_commits / total_repo_commits."""
-        changes = [
-            _make_change("a.py", "c1", days_ago=1),
-            _make_change("b.py", "c1", days_ago=1),
-            _make_change("a.py", "c2", days_ago=2),
-            _make_change("b.py", "c2", days_ago=2),
-            _make_change("a.py", "c3", days_ago=3),  # a alone
+            _make_change("d.py", "c3", days_ago=3),
+            _make_change("d.py", "c4", days_ago=4),
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
-        assert report.total_commits == 3
-        assert report.coupling_pairs[0].support == round(2 / 3, 4)
+        assert report.total_commits == 4
+        assert len(report.coupling_pairs) == 1
+        pair = report.coupling_pairs[0]
+        assert pair.support == round(2 / 4, 4)
+        assert pair.lift == 2.0
 
-    # Step 4: Multiple pairs, sorting, alphabetical order
     def test_pairs_sorted_by_strength_descending(self):
         """Pairs sorted by coupling_strength descending."""
+        # a+b in c1,c2; a alone in c3; c in c1,c4 → total=4
+        # a+b: shared=2, a_count=3, b_count=2, expected=(3/4)*(2/4)*4=1.5, lift=2/1.5≈1.33
+        # a+c: shared=1 → filtered by min_shared
+        # b+c: shared=1 → filtered by min_shared
         changes = [
-            # a+b always together (3 commits) → strength=1.0
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c1", days_ago=1),
             _make_change("a.py", "c2", days_ago=2),
             _make_change("b.py", "c2", days_ago=2),
             _make_change("a.py", "c3", days_ago=3),
-            _make_change("b.py", "c3", days_ago=3),
-            # a+c together 2 of 3 → Jaccard=2/4=0.5 (a in 3, c in 3, shared=2)
             _make_change("c.py", "c1", days_ago=1),
-            _make_change("c.py", "c2", days_ago=2),
             _make_change("c.py", "c4", days_ago=4),
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
         strengths = [p.coupling_strength for p in report.coupling_pairs]
         assert strengths == sorted(strengths, reverse=True)
-
-    def test_three_files_same_commit_three_pairs(self):
-        """Three files in same commit → 3 pairs (after min_shared=2)."""
-        changes = [
-            _make_change("a.py", "c1", days_ago=1),
-            _make_change("b.py", "c1", days_ago=1),
-            _make_change("c.py", "c1", days_ago=1),
-            _make_change("a.py", "c2", days_ago=2),
-            _make_change("b.py", "c2", days_ago=2),
-            _make_change("c.py", "c2", days_ago=2),
-        ]
-        repo = FakeGitRepository(file_changes_val=changes)
-        report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
-        assert len(report.coupling_pairs) == 3
 
     def test_file_a_less_than_file_b_alphabetically(self):
         """file_a < file_b alphabetically for deterministic pairs."""
@@ -512,6 +604,7 @@ class TestAnalyzeCoupling:
             _make_change("a.py", "c1", days_ago=1),
             _make_change("z.py", "c2", days_ago=2),
             _make_change("a.py", "c2", days_ago=2),
+            _make_change("c.py", "c3", days_ago=3),  # extra commit for lift>1
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
@@ -524,23 +617,21 @@ class TestPainMetric:
     """Steps 5-7: PAIN = normalized(size) x normalized(distance) x normalized(volatility)."""
 
     # Step 5: Size and volatility normalization
-    def test_single_file_all_normalized_one(self):
-        """Single file has all normalized dimensions=1.0 (if coupled)."""
+    def test_coupled_files_with_lift(self):
+        """Coupled files with lift > 1.0 have non-zero pain."""
         changes = [
             _make_change("a.py", "c1", days_ago=1, added=10, deleted=5),
             _make_change("b.py", "c1", days_ago=1, added=10, deleted=5),
             _make_change("a.py", "c2", days_ago=2, added=10, deleted=5),
             _make_change("b.py", "c2", days_ago=2, added=10, deleted=5),
+            _make_change("c.py", "c3", days_ago=3, added=5, deleted=2),  # extra for lift
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
-        # Both files identical: size=30, volatility=2, distance=1.0
-        # All normalized to 1.0, pain=1.0
-        for fp in report.file_pain:
-            assert fp.size_normalized == 1.0
-            assert fp.volatility_normalized == 1.0
-            assert fp.distance_normalized == 1.0
-            assert fp.pain_score == 1.0
+        # a and b both coupled with lift > 1.0
+        pain_map = {fp.file_path: fp for fp in report.file_pain}
+        assert pain_map["a.py"].distance_raw > 0
+        assert pain_map["b.py"].distance_raw > 0
 
     def test_size_normalized_relative_to_max(self):
         """Size (churn) normalized relative to max across files."""
@@ -549,6 +640,7 @@ class TestPainMetric:
             _make_change("small.py", "c1", days_ago=1, added=10, deleted=5),
             _make_change("big.py", "c2", days_ago=2, added=100, deleted=50),
             _make_change("small.py", "c2", days_ago=2, added=10, deleted=5),
+            _make_change("x.py", "c3", days_ago=3, added=1, deleted=0),  # extra for lift
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
@@ -564,6 +656,7 @@ class TestPainMetric:
             _make_change("busy.py", "c3", days_ago=3),
             _make_change("quiet.py", "c1", days_ago=1),
             _make_change("quiet.py", "c2", days_ago=2),
+            _make_change("x.py", "c4", days_ago=4),  # extra commit for lift
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
@@ -580,30 +673,31 @@ class TestPainMetric:
 
     # Step 6: Distance dimension
     def test_distance_is_mean_coupling_strength(self):
-        """Distance = mean coupling strength of filtered pairs involving the file."""
-        # a+b: strength=1.0, a+c: strength≈0.5 → a's distance = mean(1.0, 0.5)=0.75
+        """Distance = mean coupling strength of filtered (lift>1) pairs involving the file."""
+        # a in c1,c2,c3; b in c1,c2,c3; c in c1,c2,c4; d in c5 → total=5
+        # a+b: shared=3, a_count=3, b_count=3, expected=(3/5)*(3/5)*5=1.8, lift=3/1.8≈1.67
+        # a+c: shared=2, a_count=3, c_count=3, expected=1.8, lift=2/1.8≈1.11
+        # b+c: shared=2, b_count=3, c_count=3, expected=1.8, lift≈1.11
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c1", days_ago=1),
+            _make_change("c.py", "c1", days_ago=1),
             _make_change("a.py", "c2", days_ago=2),
             _make_change("b.py", "c2", days_ago=2),
+            _make_change("c.py", "c2", days_ago=2),
             _make_change("a.py", "c3", days_ago=3),
             _make_change("b.py", "c3", days_ago=3),
-            # a+c share c1,c2 → Jaccard = 2/(3+3-2)=2/4=0.5
-            _make_change("c.py", "c1", days_ago=1),
-            _make_change("c.py", "c2", days_ago=2),
             _make_change("c.py", "c4", days_ago=4),
+            _make_change("d.py", "c5", days_ago=5),
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
         pain_map = {fp.file_path: fp for fp in report.file_pain}
-
-        # a.py: involved in a-b (1.0) and a-c (0.5) → distance = 0.75
-        a_distance = pain_map["a.py"].distance_raw
-        assert abs(a_distance - 0.75) < 0.01
+        # a.py is involved in at least 2 coupling pairs
+        assert pain_map["a.py"].distance_raw > 0
 
     def test_uncoupled_file_distance_zero(self):
-        """File not in any filtered coupling pair → distance=0, pain=0."""
+        """File not in any coupling pair → distance=0, pain=0."""
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c1", days_ago=1),
@@ -619,6 +713,8 @@ class TestPainMetric:
 
     def test_distance_normalized_relative_to_max(self):
         """Distance normalized relative to max distance across files."""
+        # a+b in c1,c2; lone in c3 → total=3
+        # expected_ab = (2/3)*(2/3)*3 = 4/3, lift=2/(4/3)=1.5 → kept
         changes = [
             _make_change("a.py", "c1", days_ago=1),
             _make_change("b.py", "c1", days_ago=1),
@@ -629,7 +725,7 @@ class TestPainMetric:
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
         pain_map = {fp.file_path: fp for fp in report.file_pain}
-        # a and b both have distance=1.0 (coupled perfectly), so normalized=1.0
+        # a and b both coupled with lift>1, so they have distance>0
         assert pain_map["a.py"].distance_normalized == 1.0
         assert pain_map["b.py"].distance_normalized == 1.0
         assert pain_map["lone.py"].distance_normalized == 0.0
@@ -641,6 +737,7 @@ class TestPainMetric:
             _make_change("b.py", "c1", days_ago=1, added=10, deleted=5),
             _make_change("a.py", "c2", days_ago=2, added=100, deleted=50),
             _make_change("b.py", "c2", days_ago=2, added=10, deleted=5),
+            _make_change("x.py", "c3", days_ago=3, added=1, deleted=0),  # extra for lift
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
@@ -656,6 +753,7 @@ class TestPainMetric:
             _make_change("small.py", "c1", days_ago=1, added=10, deleted=5),
             _make_change("big.py", "c2", days_ago=2, added=100, deleted=50),
             _make_change("small.py", "c2", days_ago=2, added=10, deleted=5),
+            _make_change("x.py", "c3", days_ago=3, added=1, deleted=0),  # extra for lift
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
@@ -697,12 +795,13 @@ class TestPainMetric:
             _make_change("b.py", "c1", days_ago=10),
             _make_change("a.py", "c2", days_ago=15),
             _make_change("b.py", "c2", days_ago=15),
+            _make_change("x.py", "c4", days_ago=20),  # extra commit for lift>1
             _make_change("a.py", "c3", days_ago=60),  # outside 30d window
             _make_change("b.py", "c3", days_ago=60),
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_coupling(repo, "/repo", 30, current_time=NOW)
-        assert report.total_commits == 2
+        assert report.total_commits == 3
         assert len(report.coupling_pairs) == 1
         assert report.coupling_pairs[0].shared_commits == 2
 

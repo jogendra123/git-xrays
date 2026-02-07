@@ -54,8 +54,8 @@ def _make_hotspot() -> HotspotReport:
         repo_path="/repo", window_days=90,
         from_date=_SINCE, to_date=_NOW, total_commits=10,
         files=[
-            FileMetrics("src/a.py", 5, 100, 1.0, 0.8),
-            FileMetrics("src/b.py", 3, 60, 0.36, 0.6667),
+            FileMetrics("src/a.py", 5, 100, 1.0, 0.8, 500),
+            FileMetrics("src/b.py", 3, 60, 0.36, 0.6667, 300),
         ],
     )
 
@@ -64,7 +64,7 @@ def _make_knowledge() -> KnowledgeReport:
     return KnowledgeReport(
         repo_path="/repo", window_days=90,
         from_date=_SINCE, to_date=_NOW, total_commits=10,
-        developer_risk_index=2,
+        developer_risk_index=0.3,
         knowledge_island_count=1,
         files=[
             FileKnowledge("src/a.py", 0.85, "Alice", 0.9, True, 2, []),
@@ -77,7 +77,7 @@ def _make_coupling() -> CouplingReport:
         repo_path="/repo", window_days=90,
         from_date=_SINCE, to_date=_NOW, total_commits=10,
         coupling_pairs=[
-            CouplingPair("src/a.py", "src/b.py", 3, 10, 0.75, 0.3),
+            CouplingPair("src/a.py", "src/b.py", 3, 10, 0.75, 0.3, 1.5, 2.0),
         ],
         file_pain=[
             FilePain("src/a.py", 100, 1.0, 5, 1.0, 0.75, 1.0, 1.0),
@@ -108,10 +108,11 @@ def _make_complexity() -> ComplexityReport:
         avg_complexity=3.5, max_complexity=5,
         high_complexity_count=0, complexity_threshold=10,
         avg_length=8.0, max_length=12,
+        avg_cognitive=0.0, max_cognitive=0,
         files=[
-            FileComplexity("src/a.py", 2, 7, 3.5, 5, "process", 8.0, 12, 2.0, 3, [
-                FunctionComplexity("process", "src/a.py", None, 1, 12, 5, 3, 2, 1),
-                FunctionComplexity("helper", "src/a.py", None, 14, 4, 2, 1, 1, 0),
+            FileComplexity("src/a.py", 2, 7, 3.5, 5, "process", 8.0, 12, 2.0, 3, 0.0, 0, [
+                FunctionComplexity("process", "src/a.py", None, 1, 12, 5, 0, 3, 2, 1),
+                FunctionComplexity("helper", "src/a.py", None, 14, 4, 2, 0, 1, 1, 0),
             ]),
         ],
     )
@@ -381,7 +382,7 @@ class TestRunStoreSaveRunScalars:
         assert stored_run["dx_throughput"] == 0.8
 
     def test_knowledge_scalars(self, stored_run):
-        assert stored_run["developer_risk_index"] == 2
+        assert stored_run["developer_risk_index"] == 0.3
         assert stored_run["knowledge_island_count"] == 1
 
     def test_anemia_scalars(self, stored_run):

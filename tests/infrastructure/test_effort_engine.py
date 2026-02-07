@@ -108,7 +108,7 @@ class TestComputeEffortProxy:
 
 def _make_hotspot(fp: str, churn: int = 100, freq: int = 5, rework: float = 0.8) -> FileMetrics:
     return FileMetrics(file_path=fp, change_frequency=freq, code_churn=churn,
-                       hotspot_score=0.5, rework_ratio=rework)
+                       hotspot_score=0.5, rework_ratio=rework, file_size=0)
 
 
 def _make_knowledge(fp: str, kdi: float = 0.5, author_count: int = 3) -> FileKnowledge:

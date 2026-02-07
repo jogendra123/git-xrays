@@ -69,6 +69,22 @@ def get_repo_summary(repo: GitRepository, repo_path: str) -> RepoSummary:
     )
 
 
+def _compute_rework_ratio(dates: list[datetime], window_days: int = 14) -> float:
+    """Fraction of commits re-touching a file within *window_days* of a prior touch.
+
+    Single-commit files return 0.0.
+    """
+    if len(dates) <= 1:
+        return 0.0
+    sorted_dates = sorted(dates)
+    rework_count = sum(
+        1
+        for i in range(1, len(sorted_dates))
+        if (sorted_dates[i] - sorted_dates[i - 1]).total_seconds() / 86400 <= window_days
+    )
+    return rework_count / len(sorted_dates)
+
+
 def analyze_hotspots(
     repo: GitRepository, repo_path: str, window_days: int,
     current_time: datetime | None = None,
@@ -82,8 +98,11 @@ def analyze_hotspots(
     freq: defaultdict[str, int] = defaultdict(int)  # commit count per file
     churn: defaultdict[str, int] = defaultdict(int)  # lines added+deleted
     commits_seen: defaultdict[str, set[str]] = defaultdict(set)
+    commit_dates: defaultdict[str, list[datetime]] = defaultdict(list)
 
     for c in changes:
+        if c.commit_hash not in commits_seen[c.file_path]:
+            commit_dates[c.file_path].append(c.date)
         commits_seen[c.file_path].add(c.commit_hash)
         churn[c.file_path] += c.lines_added + c.lines_deleted
 
@@ -95,18 +114,29 @@ def analyze_hotspots(
         all_commit_hashes.add(c.commit_hash)
     total_commits = len(all_commit_hashes)
 
-    # Compute normalized hotspot score
+    # Get file sizes for relative churn
+    sizes = repo.file_sizes()
+
+    # Compute relative churn (churn / file_size), fall back to absolute if size unknown
+    relative_churn: dict[str, float] = {}
+    for path in freq:
+        ch = churn[path]
+        sz = sizes.get(path, 0)
+        relative_churn[path] = ch / sz if sz > 0 else float(ch)
+
+    # Compute normalized hotspot score using relative churn
     max_freq = max(freq.values()) if freq else 1
-    max_churn = max(churn.values()) if churn else 1
+    max_rel_churn = max(relative_churn.values()) if relative_churn else 1.0
 
     files: list[FileMetrics] = []
     for path in freq:
         f = freq[path]
         ch = churn[path]
+        sz = sizes.get(path, 0)
         norm_freq = f / max_freq
-        norm_churn = ch / max_churn
-        hotspot = norm_freq * norm_churn
-        rework = (f - 1) / f if f > 1 else 0.0
+        norm_rel_churn = relative_churn[path] / max_rel_churn if max_rel_churn > 0 else 0.0
+        hotspot = norm_freq * norm_rel_churn
+        rework = _compute_rework_ratio(commit_dates[path])
         files.append(
             FileMetrics(
                 file_path=path,
@@ -114,6 +144,7 @@ def analyze_hotspots(
                 code_churn=ch,
                 hotspot_score=round(hotspot, 4),
                 rework_ratio=round(rework, 4),
+                file_size=sz,
             )
         )
 
@@ -149,7 +180,7 @@ def analyze_knowledge(
         return KnowledgeReport(
             repo_path=repo_path, window_days=window_days,
             from_date=since, to_date=now,
-            total_commits=0, developer_risk_index=0,
+            total_commits=0, developer_risk_index=0.0,
             knowledge_island_count=0, files=[],
         )
 
@@ -235,7 +266,7 @@ def analyze_knowledge(
     knowledge_files.sort(key=lambda f: f.knowledge_concentration, reverse=True)
 
     island_count = sum(1 for f in knowledge_files if f.is_knowledge_island)
-    dri = _compute_dri(changes)
+    gini = _compute_gini(changes)
 
     return KnowledgeReport(
         repo_path=repo_path,
@@ -243,36 +274,35 @@ def analyze_knowledge(
         from_date=since,
         to_date=now,
         total_commits=total_commits,
-        developer_risk_index=dri,
+        developer_risk_index=gini,
         knowledge_island_count=island_count,
         files=knowledge_files,
     )
 
 
-def _compute_dri(changes: list[FileChange]) -> int:
-    """Compute Developer Risk Index (bus factor).
+def _compute_gini(changes: list[FileChange]) -> float:
+    """Compute Gini coefficient of author churn distribution.
 
-    Minimum number of authors accounting for >50% of total churn.
+    Returns a float in [0, 1]. 0.0 = perfectly equal, 1.0 = one person.
     """
     if not changes:
-        return 0
+        return 0.0
 
     author_churn: defaultdict[str, int] = defaultdict(int)
     for c in changes:
         author_churn[c.author_email] += c.lines_added + c.lines_deleted
 
-    total = sum(author_churn.values())
+    values = sorted(author_churn.values())
+    n = len(values)
+    if n == 0:
+        return 0.0
+    total = sum(values)
     if total == 0:
-        return 0
-
-    sorted_authors = sorted(author_churn.values(), reverse=True)
-    cumulative = 0
-    for i, churn in enumerate(sorted_authors):
-        cumulative += churn
-        if cumulative > total * 0.5:
-            return i + 1
-
-    return len(sorted_authors)
+        return 0.0
+    # Standard Gini: (2 * sum(i*x_i) - (n+1) * sum(x_i)) / (n * sum(x_i))
+    numerator = 2.0 * sum((i + 1) * v for i, v in enumerate(values)) - (n + 1) * total
+    denominator = n * total
+    return round(numerator / denominator, 4)
 
 
 def analyze_coupling(
@@ -311,7 +341,7 @@ def analyze_coupling(
             for j in range(i + 1, len(sorted_files)):
                 pair_shared[(sorted_files[i], sorted_files[j])] += 1
 
-    # Build coupling pairs with Jaccard filtering
+    # Build coupling pairs with Jaccard + lift filtering
     coupling_pairs: list[CouplingPair] = []
     for (fa, fb), shared in pair_shared.items():
         if shared < min_shared_commits:
@@ -319,10 +349,16 @@ def analyze_coupling(
         union = file_commit_count[fa] + file_commit_count[fb] - shared
         strength = round(shared / union, 4) if union > 0 else 0.0
         support = round(shared / total_commits, 4) if total_commits > 0 else 0.0
+        # Lift: observed / expected co-change
+        expected = (file_commit_count[fa] / total_commits) * (file_commit_count[fb] / total_commits) * total_commits if total_commits > 0 else 0.0
+        lift = round(shared / expected, 4) if expected > 0 else 0.0
+        if lift <= 1.0:
+            continue
         coupling_pairs.append(CouplingPair(
             file_a=fa, file_b=fb,
             shared_commits=shared, total_commits=total_commits,
             coupling_strength=strength, support=support,
+            expected_cochange=round(expected, 4), lift=lift,
         ))
 
     coupling_pairs.sort(key=lambda p: p.coupling_strength, reverse=True)
@@ -555,7 +591,9 @@ def analyze_complexity(
             total_files=0, total_functions=0,
             avg_complexity=0.0, max_complexity=0,
             high_complexity_count=0, complexity_threshold=complexity_threshold,
-            avg_length=0.0, max_length=0, files=[],
+            avg_length=0.0, max_length=0,
+            avg_cognitive=0.0, max_cognitive=0,
+            files=[],
         )
 
     file_results: list[FileComplexity] = []
@@ -579,16 +617,21 @@ def analyze_complexity(
             total_files=len(file_results), total_functions=0,
             avg_complexity=0.0, max_complexity=0,
             high_complexity_count=0, complexity_threshold=complexity_threshold,
-            avg_length=0.0, max_length=0, files=file_results,
+            avg_length=0.0, max_length=0,
+            avg_cognitive=0.0, max_cognitive=0,
+            files=file_results,
         )
 
     all_cc = [fn.cyclomatic_complexity for fn in all_funcs]
+    all_cog = [fn.cognitive_complexity for fn in all_funcs]
     all_len = [fn.length for fn in all_funcs]
     avg_cc = round(sum(all_cc) / len(all_cc), 2)
     max_cc = max(all_cc)
     high_count = sum(1 for cc in all_cc if cc > complexity_threshold)
     avg_len = round(sum(all_len) / len(all_len), 2)
     max_len = max(all_len)
+    avg_cog = round(sum(all_cog) / len(all_cog), 2)
+    max_cog = max(all_cog)
 
     return ComplexityReport(
         repo_path=repo_path,
@@ -601,6 +644,8 @@ def analyze_complexity(
         complexity_threshold=complexity_threshold,
         avg_length=avg_len,
         max_length=max_len,
+        avg_cognitive=avg_cog,
+        max_cognitive=max_cog,
         files=file_results,
     )
 

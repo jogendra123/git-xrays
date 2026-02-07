@@ -13,12 +13,14 @@ class FakeGitRepository:
         last_commit_date_val: datetime | None = None,
         file_changes_val: list[FileChange] | None = None,
         ref_dates: dict[str, datetime] | None = None,
+        file_sizes_val: dict[str, int] | None = None,
     ) -> None:
         self._commit_count = commit_count_val
         self._first_commit_date = first_commit_date_val
         self._last_commit_date = last_commit_date_val
         self._file_changes = file_changes_val or []
         self._ref_dates = ref_dates or {}
+        self._file_sizes = file_sizes_val or {}
 
     def commit_count(self) -> int:
         return self._commit_count
@@ -43,6 +45,9 @@ class FakeGitRepository:
         if ref not in self._ref_dates:
             raise ValueError(f"Unknown ref: {ref}")
         return self._ref_dates[ref]
+
+    def file_sizes(self, ref: str | None = None) -> dict[str, int]:
+        return dict(self._file_sizes)
 
 
 class FakeSourceCodeReader:

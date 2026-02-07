@@ -506,7 +506,7 @@ def _print_effort_distribution(report) -> None:
 def _print_knowledge(report) -> None:
     print(f"--- Knowledge Analysis (last {report.window_days} days, {report.total_commits} commits) ---\n")
 
-    print(f"Developer Risk Index: {report.developer_risk_index}")
+    print(f"Developer Risk Index: {report.developer_risk_index:.4f}")
     print(f"Knowledge Islands:    {report.knowledge_island_count}")
     print()
 
@@ -541,7 +541,8 @@ def _print_coupling(report) -> None:
         f"{'File B':<{fb_width}}  "
         f"{'Shared':>6}  "
         f"{'Strength':>8}  "
-        f"{'Support':>7}"
+        f"{'Support':>7}  "
+        f"{'Lift':>6}"
     )
     print(header)
     print("-" * len(header))
@@ -558,7 +559,8 @@ def _print_coupling(report) -> None:
             f"{fb:<{fb_width}}  "
             f"{p.shared_commits:>6}  "
             f"{p.coupling_strength:>8.4f}  "
-            f"{p.support:>7.4f}"
+            f"{p.support:>7.4f}  "
+            f"{p.lift:>6.2f}"
         )
 
     if len(report.coupling_pairs) > 20:
@@ -677,6 +679,8 @@ def _print_complexity(report) -> None:
             ("Functions", ">9", lambda f: f.function_count),
             ("Max CC", ">6", lambda f: f.max_complexity),
             ("Avg CC", ">6.2f", lambda f: f.avg_complexity),
+            ("Max CogC", ">8", lambda f: f.max_cognitive),
+            ("Avg CogC", ">8.2f", lambda f: f.avg_cognitive),
             ("Max Depth", ">9", lambda f: f.max_nesting),
             ("Max Len", ">7", lambda f: f.max_length),
         ],

@@ -185,7 +185,7 @@ class TestComputeCognitiveLoadPerFile:
     def test_single_file_all_scores(self):
         hotspot_files = [
             FileMetrics(file_path="a.py", change_frequency=5,
-                        code_churn=100, hotspot_score=1.0, rework_ratio=0.8),
+                        code_churn=100, hotspot_score=1.0, rework_ratio=0.8, file_size=0),
         ]
         knowledge_files = [
             FileKnowledge(
@@ -209,7 +209,8 @@ class TestComputeCognitiveLoadPerFile:
                 total_complexity=10, avg_complexity=5.0,
                 max_complexity=7, worst_function="process",
                 avg_length=15.0, max_length=20,
-                avg_nesting=2.0, max_nesting=3, functions=[],
+                avg_nesting=2.0, max_nesting=3,
+                avg_cognitive=0.0, max_cognitive=0, functions=[],
             ),
         ]
         result = compute_cognitive_load_per_file(
@@ -222,9 +223,9 @@ class TestComputeCognitiveLoadPerFile:
     def test_normalization(self):
         hotspot_files = [
             FileMetrics(file_path="a.py", change_frequency=10,
-                        code_churn=200, hotspot_score=1.0, rework_ratio=0.9),
+                        code_churn=200, hotspot_score=1.0, rework_ratio=0.9, file_size=0),
             FileMetrics(file_path="b.py", change_frequency=1,
-                        code_churn=10, hotspot_score=0.1, rework_ratio=0.0),
+                        code_churn=10, hotspot_score=0.1, rework_ratio=0.0, file_size=0),
         ]
         result = compute_cognitive_load_per_file(hotspot_files, [], [], [])
         for f in result:
@@ -236,7 +237,7 @@ class TestComputeCognitiveLoadPerFile:
     def test_composite_is_mean(self):
         hotspot_files = [
             FileMetrics(file_path="a.py", change_frequency=5,
-                        code_churn=50, hotspot_score=0.5, rework_ratio=0.5),
+                        code_churn=50, hotspot_score=0.5, rework_ratio=0.5, file_size=0),
         ]
         knowledge_files = [
             FileKnowledge(
@@ -256,9 +257,9 @@ class TestComputeCognitiveLoadPerFile:
     def test_sorted_by_composite_desc(self):
         hotspot_files = [
             FileMetrics(file_path="low.py", change_frequency=1,
-                        code_churn=5, hotspot_score=0.1, rework_ratio=0.0),
+                        code_churn=5, hotspot_score=0.1, rework_ratio=0.0, file_size=0),
             FileMetrics(file_path="high.py", change_frequency=10,
-                        code_churn=200, hotspot_score=1.0, rework_ratio=0.9),
+                        code_churn=200, hotspot_score=1.0, rework_ratio=0.9, file_size=0),
         ]
         result = compute_cognitive_load_per_file(hotspot_files, [], [], [])
         assert result[0].file_path == "high.py"
@@ -268,7 +269,7 @@ class TestComputeCognitiveLoadPerFile:
     def test_missing_complexity(self):
         hotspot_files = [
             FileMetrics(file_path="a.py", change_frequency=5,
-                        code_churn=50, hotspot_score=0.5, rework_ratio=0.5),
+                        code_churn=50, hotspot_score=0.5, rework_ratio=0.5, file_size=0),
         ]
         result = compute_cognitive_load_per_file(hotspot_files, [], [], [])
         assert result[0].complexity_score == 0.0
@@ -276,7 +277,7 @@ class TestComputeCognitiveLoadPerFile:
     def test_missing_coupling(self):
         hotspot_files = [
             FileMetrics(file_path="a.py", change_frequency=5,
-                        code_churn=50, hotspot_score=0.5, rework_ratio=0.5),
+                        code_churn=50, hotspot_score=0.5, rework_ratio=0.5, file_size=0),
         ]
         result = compute_cognitive_load_per_file(hotspot_files, [], [], [])
         assert result[0].coordination_score == 0.0
@@ -284,7 +285,7 @@ class TestComputeCognitiveLoadPerFile:
     def test_missing_knowledge(self):
         hotspot_files = [
             FileMetrics(file_path="a.py", change_frequency=5,
-                        code_churn=50, hotspot_score=0.5, rework_ratio=0.5),
+                        code_churn=50, hotspot_score=0.5, rework_ratio=0.5, file_size=0),
         ]
         result = compute_cognitive_load_per_file(hotspot_files, [], [], [])
         assert result[0].knowledge_score == 0.0
@@ -311,11 +312,11 @@ class TestComputeCognitiveLoadPerFile:
     def test_multiple_files_different_loads(self):
         hotspot_files = [
             FileMetrics(file_path="a.py", change_frequency=10,
-                        code_churn=200, hotspot_score=1.0, rework_ratio=0.9),
+                        code_churn=200, hotspot_score=1.0, rework_ratio=0.9, file_size=0),
             FileMetrics(file_path="b.py", change_frequency=2,
-                        code_churn=20, hotspot_score=0.2, rework_ratio=0.0),
+                        code_churn=20, hotspot_score=0.2, rework_ratio=0.0, file_size=0),
             FileMetrics(file_path="c.py", change_frequency=5,
-                        code_churn=80, hotspot_score=0.5, rework_ratio=0.4),
+                        code_churn=80, hotspot_score=0.5, rework_ratio=0.4, file_size=0),
         ]
         knowledge_files = [
             FileKnowledge(
