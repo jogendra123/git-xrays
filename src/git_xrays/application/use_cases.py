@@ -55,6 +55,7 @@ from git_xrays.infrastructure.effort_engine import (
     compute_commit_density,
     compute_effort_proxy,
     compute_rei_scores,
+    grid_search_alpha,
     r_squared as compute_r_squared,
     ridge_regression,
 )
@@ -85,6 +86,9 @@ def _compute_rework_ratio(dates: list[datetime], window_days: int = 14) -> float
     return rework_count / len(sorted_dates)
 
 
+HOTSPOT_HALF_LIFE = 30.0
+
+
 def analyze_hotspots(
     repo: GitRepository, repo_path: str, window_days: int,
     current_time: datetime | None = None,
@@ -100,11 +104,21 @@ def analyze_hotspots(
     commits_seen: defaultdict[str, set[str]] = defaultdict(set)
     commit_dates: defaultdict[str, list[datetime]] = defaultdict(list)
 
+    # Decay-weighted aggregates for hotspot scoring
+    weighted_freq: defaultdict[str, float] = defaultdict(float)
+    weighted_churn: defaultdict[str, float] = defaultdict(float)
+
     for c in changes:
+        age_days = (now - c.date).total_seconds() / 86400
+        weight = 2 ** (-age_days / HOTSPOT_HALF_LIFE)
+
         if c.commit_hash not in commits_seen[c.file_path]:
             commit_dates[c.file_path].append(c.date)
+            weighted_freq[c.file_path] += weight
         commits_seen[c.file_path].add(c.commit_hash)
-        churn[c.file_path] += c.lines_added + c.lines_deleted
+        file_churn = c.lines_added + c.lines_deleted
+        churn[c.file_path] += file_churn
+        weighted_churn[c.file_path] += file_churn * weight
 
     for path, hashes in commits_seen.items():
         freq[path] = len(hashes)
@@ -117,24 +131,24 @@ def analyze_hotspots(
     # Get file sizes for relative churn
     sizes = repo.file_sizes()
 
-    # Compute relative churn (churn / file_size), fall back to absolute if size unknown
-    relative_churn: dict[str, float] = {}
+    # Compute weighted relative churn (weighted_churn / file_size)
+    weighted_relative_churn: dict[str, float] = {}
     for path in freq:
-        ch = churn[path]
+        wc = weighted_churn[path]
         sz = sizes.get(path, 0)
-        relative_churn[path] = ch / sz if sz > 0 else float(ch)
+        weighted_relative_churn[path] = wc / sz if sz > 0 else wc
 
-    # Compute normalized hotspot score using relative churn
-    max_freq = max(freq.values()) if freq else 1
-    max_rel_churn = max(relative_churn.values()) if relative_churn else 1.0
+    # Compute normalized hotspot score using decay-weighted values
+    max_wfreq = max(weighted_freq.values()) if weighted_freq else 1.0
+    max_wrel_churn = max(weighted_relative_churn.values()) if weighted_relative_churn else 1.0
 
     files: list[FileMetrics] = []
     for path in freq:
         f = freq[path]
         ch = churn[path]
         sz = sizes.get(path, 0)
-        norm_freq = f / max_freq
-        norm_rel_churn = relative_churn[path] / max_rel_churn if max_rel_churn > 0 else 0.0
+        norm_freq = weighted_freq[path] / max_wfreq if max_wfreq > 0 else 0.0
+        norm_rel_churn = weighted_relative_churn[path] / max_wrel_churn if max_wrel_churn > 0 else 0.0
         hotspot = norm_freq * norm_rel_churn
         rework = _compute_rework_ratio(commit_dates[path])
         files.append(
@@ -243,7 +257,7 @@ def analyze_knowledge(
         n_authors = len(contributions)
 
         # KDI = 1 - normalized_shannon_entropy
-        proportions = [a.proportion for a in contributions]
+        proportions = [a.weighted_proportion for a in contributions]
         if n_authors <= 1:
             kdi = 1.0
         else:
@@ -305,6 +319,9 @@ def _compute_gini(changes: list[FileChange]) -> float:
     return round(numerator / denominator, 4)
 
 
+COUPLING_HALF_LIFE = 30.0
+
+
 def analyze_coupling(
     repo: GitRepository, repo_path: str, window_days: int,
     current_time: datetime | None = None,
@@ -322,34 +339,48 @@ def analyze_coupling(
             total_commits=0, coupling_pairs=[], file_pain=[],
         )
 
-    # Build commit → set of files
-    commit_files: defaultdict[str, set[str]] = defaultdict(set)
+    # Build commit → set of files + commit date
+    commit_files_map: defaultdict[str, set[str]] = defaultdict(set)
+    commit_date_map: dict[str, datetime] = {}
     for c in changes:
-        commit_files[c.commit_hash].add(c.file_path)
+        commit_files_map[c.commit_hash].add(c.file_path)
+        commit_date_map[c.commit_hash] = c.date
 
-    total_commits = len(commit_files)
+    total_commits = len(commit_files_map)
 
     # Count co-changes for each file pair and individual commit counts
+    # Raw counts (for min_shared filter and lift)
     file_commit_count: defaultdict[str, int] = defaultdict(int)
     pair_shared: defaultdict[tuple[str, str], int] = defaultdict(int)
+    # Temporal decay-weighted counts (for coupling_strength)
+    file_commit_weight: defaultdict[str, float] = defaultdict(float)
+    pair_weighted_shared: defaultdict[tuple[str, str], float] = defaultdict(float)
 
-    for files in commit_files.values():
+    for commit_hash, files in commit_files_map.items():
+        age_days = (now - commit_date_map[commit_hash]).total_seconds() / 86400
+        weight = 2 ** (-age_days / COUPLING_HALF_LIFE)
+
         sorted_files = sorted(files)
         for f in sorted_files:
             file_commit_count[f] += 1
+            file_commit_weight[f] += weight
         for i in range(len(sorted_files)):
             for j in range(i + 1, len(sorted_files)):
-                pair_shared[(sorted_files[i], sorted_files[j])] += 1
+                pair_key = (sorted_files[i], sorted_files[j])
+                pair_shared[pair_key] += 1
+                pair_weighted_shared[pair_key] += weight
 
-    # Build coupling pairs with Jaccard + lift filtering
+    # Build coupling pairs with temporal Jaccard + lift filtering
     coupling_pairs: list[CouplingPair] = []
     for (fa, fb), shared in pair_shared.items():
         if shared < min_shared_commits:
             continue
-        union = file_commit_count[fa] + file_commit_count[fb] - shared
-        strength = round(shared / union, 4) if union > 0 else 0.0
+        # Temporal Jaccard: weighted_shared / weighted_union
+        w_shared = pair_weighted_shared[(fa, fb)]
+        w_union = file_commit_weight[fa] + file_commit_weight[fb] - w_shared
+        strength = round(w_shared / w_union, 4) if w_union > 0 else 0.0
         support = round(shared / total_commits, 4) if total_commits > 0 else 0.0
-        # Lift: observed / expected co-change
+        # Lift: uses raw counts (not weighted)
         expected = (file_commit_count[fa] / total_commits) * (file_commit_count[fb] / total_commits) * total_commits if total_commits > 0 else 0.0
         lift = round(shared / expected, 4) if expected > 0 else 0.0
         if lift <= 1.0:
@@ -752,16 +783,20 @@ def analyze_change_clusters(
 def analyze_effort(
     repo: GitRepository, repo_path: str, window_days: int,
     current_time: datetime | None = None,
-    alpha: float = 1.0,
+    alpha: float | None = None,
 ) -> EffortReport:
     """Compute Relative Effort Index per file using ridge regression.
 
     Internally runs hotspot, knowledge, and coupling analyses to gather
     features, then trains a ridge regression model on an effort proxy label.
     Falls back to equal weights when fewer than 3 files are present.
+
+    When alpha is None (default), auto-tunes via grid search over
+    [0.1, 0.5, 1.0, 2.0, 5.0]. Pass a float to fix alpha explicitly.
     """
     now = current_time or datetime.now(timezone.utc)
     since = now - timedelta(days=window_days)
+    n_features = len(FEATURE_NAMES)
 
     # Run sub-analyses
     hotspot_report = analyze_hotspots(repo, repo_path, window_days, current_time=now)
@@ -772,13 +807,15 @@ def analyze_effort(
     file_paths = sorted(set(f.file_path for f in hotspot_report.files))
     n_files = len(file_paths)
 
+    chosen_alpha = alpha if alpha is not None else 1.0
+
     if n_files == 0:
         return EffortReport(
             repo_path=repo_path, window_days=window_days,
             from_date=since, to_date=now,
-            total_files=0, model_r_squared=0.0, alpha=alpha,
+            total_files=0, model_r_squared=0.0, alpha=chosen_alpha,
             feature_names=FEATURE_NAMES,
-            coefficients=[0.2] * 5,
+            coefficients=[1.0 / n_features] * n_features,
             files=[],
         )
 
@@ -806,19 +843,24 @@ def analyze_effort(
 
     use_fallback = n_files < 3
     if use_fallback:
-        coefficients = [0.2] * 5
+        coefficients = [1.0 / n_features] * n_features
         r2 = 0.0
     else:
         # Normalize features for regression
         norm_matrix = _normalize_matrix(matrix)
         y = [proxy.get(fp, 0.0) for fp in file_paths]
-        coefficients = ridge_regression(norm_matrix, y, alpha=alpha)
-        # Compute predictions for R²
-        y_pred = [
-            sum(norm_matrix[i][j] * coefficients[j] for j in range(5))
-            for i in range(n_files)
-        ]
-        r2 = compute_r_squared(y, y_pred)
+        if alpha is None:
+            # Auto-tune alpha via grid search
+            chosen_alpha, coefficients, r2 = grid_search_alpha(norm_matrix, y)
+        else:
+            chosen_alpha = alpha
+            coefficients = ridge_regression(norm_matrix, y, alpha=alpha)
+            # Compute predictions for R²
+            y_pred = [
+                sum(norm_matrix[i][j] * coefficients[j] for j in range(n_features))
+                for i in range(n_files)
+            ]
+            r2 = compute_r_squared(y, y_pred)
 
     # Compute REI scores
     norm_matrix = _normalize_matrix(matrix)
@@ -859,7 +901,7 @@ def analyze_effort(
         from_date=since, to_date=now,
         total_files=n_files,
         model_r_squared=round(r2, 4),
-        alpha=alpha,
+        alpha=chosen_alpha,
         feature_names=FEATURE_NAMES,
         coefficients=[round(c, 6) for c in coefficients],
         files=files,

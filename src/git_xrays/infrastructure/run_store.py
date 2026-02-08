@@ -22,6 +22,7 @@ class RunStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
         self._ensure_tables()
+        self._migrate()
 
     def _ensure_tables(self) -> None:
         self._conn.execute("""
@@ -176,6 +177,22 @@ class RunStore:
                 PRIMARY KEY (run_id, file_path)
             )
         """)
+
+    def _migrate(self) -> None:
+        """Apply schema migrations for columns added after initial release."""
+        migrations = [
+            ("hotspot_files", "file_size", "INTEGER"),
+            ("complexity_functions", "cognitive_complexity", "INTEGER"),
+            ("coupling_pairs", "expected_cochange", "DOUBLE"),
+            ("coupling_pairs", "lift", "DOUBLE"),
+        ]
+        for table, column, col_type in migrations:
+            try:
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"  # noqa: S608
+                )
+            except duckdb.CatalogException:
+                pass  # Column already exists
 
     def _insert_rows(self, table: str, run_id: str, records, fields_fn) -> None:
         """Insert multiple rows into a child table."""

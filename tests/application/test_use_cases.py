@@ -85,10 +85,10 @@ class TestAnalyzeHotspots:
         # a.py has highest hotspot (freq=2, churn=225 vs b.py freq=1, churn=15)
         assert report.files[0].file_path == "a.py"
         assert report.files[1].file_path == "b.py"
-        # a.py: norm_freq=1.0, norm_churn=1.0 → hotspot=1.0
+        # a.py: max weighted freq and churn → hotspot=1.0
         assert report.files[0].hotspot_score == 1.0
-        # b.py: norm_freq=0.5, norm_churn=15/225 ≈ 0.0667 → hotspot ≈ 0.0333
-        assert report.files[1].hotspot_score == round(0.5 * (15 / 225), 4)
+        # b.py: lower score (temporal decay slightly adjusts raw ratios)
+        assert report.files[1].hotspot_score < 0.1
 
     def test_rework_ratio_commits_within_14_days(self):
         changes = [
@@ -219,6 +219,49 @@ class TestAnalyzeHotspots:
         assert report.files[0].file_size == 0
         assert report.files[0].hotspot_score == 1.0
 
+    def test_recent_commit_ranks_higher_than_old(self):
+        """Identical raw freq/churn, but different recency → different scores due to decay."""
+        changes = [
+            # recent.py: 1 commit, 1 day ago
+            _make_change("recent.py", "c1", days_ago=1, added=10, deleted=5),
+            # old.py: 1 commit, 85 days ago (same raw churn)
+            _make_change("old.py", "c2", days_ago=85, added=10, deleted=5),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
+        file_map = {f.file_path: f for f in report.files}
+        # Same raw freq/churn, but recent gets higher score
+        assert file_map["recent.py"].change_frequency == file_map["old.py"].change_frequency
+        assert file_map["recent.py"].code_churn == file_map["old.py"].code_churn
+        assert file_map["recent.py"].hotspot_score > file_map["old.py"].hotspot_score
+
+    def test_decay_half_life_30_days(self):
+        """Commit at 30 days ago gets weight ≈ 0.5 relative to day 0."""
+        changes = [
+            _make_change("recent.py", "c1", days_ago=0, added=10, deleted=5),
+            _make_change("old.py", "c2", days_ago=30, added=10, deleted=5),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
+        file_map = {f.file_path: f for f in report.files}
+        # recent.py has weight ~1.0, old.py has weight ~0.5
+        # hotspot = norm_freq * norm_churn; for recent norm_freq=1, norm_churn=1 → 1.0
+        assert file_map["recent.py"].hotspot_score == 1.0
+        # old.py: weight=0.5, norm_freq=0.5/1.0=0.5, norm_churn=0.5/1.0=0.5 → 0.25
+        assert abs(file_map["old.py"].hotspot_score - 0.25) < 0.01
+
+    def test_raw_churn_and_frequency_unchanged(self):
+        """Raw FileMetrics fields are not affected by temporal decay."""
+        changes = [
+            _make_change("a.py", "c1", days_ago=1, added=20, deleted=10),
+            _make_change("a.py", "c2", days_ago=60, added=30, deleted=15),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_hotspots(repo, "/repo", 90, current_time=NOW)
+        f = report.files[0]
+        assert f.change_frequency == 2
+        assert f.code_churn == 75  # (20+10) + (30+15)
+
 
 class TestAnalyzeKnowledge:
     def test_single_author_concentration_is_one(self):
@@ -236,7 +279,7 @@ class TestAnalyzeKnowledge:
         changes = [
             _make_change("a.py", "c1", days_ago=1, added=10, deleted=5,
                          author_name="Alice", author_email="alice@example.com"),
-            _make_change("a.py", "c2", days_ago=2, added=10, deleted=5,
+            _make_change("a.py", "c2", days_ago=1, added=10, deleted=5,
                          author_name="Bob", author_email="bob@example.com"),
         ]
         repo = FakeGitRepository(file_changes_val=changes)
@@ -395,6 +438,33 @@ class TestAnalyzeKnowledge:
         report = analyze_knowledge(repo, "/repo", 90, current_time=NOW)
         total = sum(a.weighted_proportion for a in report.files[0].authors)
         assert abs(total - 1.0) < 0.01
+
+    def test_kdi_uses_weighted_proportions(self):
+        """Equal raw churn but different recency → KDI > 0 (weighted props differ)."""
+        changes = [
+            _make_change("a.py", "c1", days_ago=1, added=10, deleted=5,
+                         author_name="Alice", author_email="alice@example.com"),
+            _make_change("a.py", "c2", days_ago=80, added=10, deleted=5,
+                         author_name="Bob", author_email="bob@example.com"),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_knowledge(repo, "/repo", 90, current_time=NOW)
+        # Raw proportions are equal (0.5 each) → raw KDI=0
+        # But weighted proportions differ (Alice recent, Bob old) → KDI > 0
+        assert report.files[0].knowledge_concentration > 0.0
+
+    def test_kdi_same_day_equals_raw(self):
+        """Same days_ago → weighted == raw → same KDI as raw computation."""
+        changes = [
+            _make_change("a.py", "c1", days_ago=5, added=10, deleted=5,
+                         author_name="Alice", author_email="alice@example.com"),
+            _make_change("a.py", "c2", days_ago=5, added=10, deleted=5,
+                         author_name="Bob", author_email="bob@example.com"),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_knowledge(repo, "/repo", 90, current_time=NOW)
+        # Same day → equal weighted proportions → KDI = 0.0
+        assert report.files[0].knowledge_concentration == 0.0
 
 
 class TestComputeGini:
@@ -611,6 +681,63 @@ class TestAnalyzeCoupling:
         assert len(report.coupling_pairs) == 1
         assert report.coupling_pairs[0].file_a == "a.py"
         assert report.coupling_pairs[0].file_b == "z.py"
+
+    def test_recent_coupling_stronger_than_old(self):
+        """Same raw shared counts but different recency → different temporal strength."""
+        # Pair a+b: shared in recent commits (days_ago=1,2)
+        # Pair c+d: shared in old commits (days_ago=80,85)
+        # Both need lift>1 so add unrelated commits
+        changes = [
+            _make_change("a.py", "c1", days_ago=1),
+            _make_change("b.py", "c1", days_ago=1),
+            _make_change("a.py", "c2", days_ago=2),
+            _make_change("b.py", "c2", days_ago=2),
+            _make_change("c.py", "c3", days_ago=80),
+            _make_change("d.py", "c3", days_ago=80),
+            _make_change("c.py", "c4", days_ago=85),
+            _make_change("d.py", "c4", days_ago=85),
+            _make_change("x.py", "c5", days_ago=40),  # unrelated for lift>1
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
+        pair_map = {(p.file_a, p.file_b): p for p in report.coupling_pairs}
+        # Both pairs have raw shared=2 but a+b is recent, c+d is old
+        assert ("a.py", "b.py") in pair_map
+        assert ("c.py", "d.py") in pair_map
+        assert pair_map[("a.py", "b.py")].coupling_strength >= pair_map[("c.py", "d.py")].coupling_strength
+
+    def test_temporal_jaccard_same_day_equals_raw(self):
+        """When all commits are on the same day, temporal Jaccard equals raw Jaccard."""
+        changes = [
+            _make_change("a.py", "c1", days_ago=5),
+            _make_change("b.py", "c1", days_ago=5),
+            _make_change("a.py", "c2", days_ago=5),
+            _make_change("b.py", "c2", days_ago=5),
+            _make_change("c.py", "c3", days_ago=5),  # extra for lift>1
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
+        assert len(report.coupling_pairs) == 1
+        pair = report.coupling_pairs[0]
+        # Raw Jaccard: shared=2, union=2, strength=1.0
+        # Temporal: same day → all weights equal → same result
+        assert pair.coupling_strength == 1.0
+
+    def test_min_shared_uses_raw_counts(self):
+        """min_shared_commits filter uses raw int counts, not weighted float."""
+        # 2 co-occurrences at very old dates → low weight but still raw count=2
+        changes = [
+            _make_change("a.py", "c1", days_ago=85),
+            _make_change("b.py", "c1", days_ago=85),
+            _make_change("a.py", "c2", days_ago=88),
+            _make_change("b.py", "c2", days_ago=88),
+            _make_change("c.py", "c3", days_ago=1),  # extra for lift>1
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_coupling(repo, "/repo", 90, current_time=NOW)
+        # Should pass min_shared=2 filter (raw count=2)
+        assert len(report.coupling_pairs) == 1
+        assert report.coupling_pairs[0].shared_commits == 2
 
 
 class TestPainMetric:
@@ -1469,8 +1596,9 @@ class TestAnalyzeEffort:
         report = analyze_effort(repo, "/repo", 90, current_time=NOW)
         assert report.total_files == 1
         assert report.model_r_squared == 0.0
-        # Fallback: equal weights (0.2 each)
-        assert all(c == pytest.approx(0.2) for c in report.coefficients)
+        # Fallback: equal weights (1/6 each for 6 features)
+        assert len(report.coefficients) == 6
+        assert all(abs(c - 1.0 / 6) < 1e-3 for c in report.coefficients)
 
     def test_two_files_uses_fallback(self):
         changes = [
@@ -1512,7 +1640,7 @@ class TestAnalyzeEffort:
         report = analyze_effort(repo, "/repo", 90, current_time=NOW)
         assert report.total_files == 3
         # With 3+ files, model should be trained (not equal weights)
-        assert len(report.coefficients) == 5
+        assert len(report.coefficients) == 6
 
     def test_rei_scores_in_zero_one(self):
         changes = [
@@ -1548,10 +1676,10 @@ class TestAnalyzeEffort:
         report = analyze_effort(repo, "/repo", 90, current_time=NOW)
         assert report.feature_names == [
             "code_churn", "change_frequency", "pain_score",
-            "knowledge_concentration", "author_count",
+            "knowledge_concentration", "author_count", "knowledge_x_pain",
         ]
 
-    def test_coefficients_length_five(self):
+    def test_coefficients_length_six(self):
         changes = [
             _make_change("a.py", "c1", days_ago=5, added=100, deleted=50),
             _make_change("b.py", "c2", days_ago=10, added=20, deleted=10),
@@ -1559,7 +1687,7 @@ class TestAnalyzeEffort:
         ]
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_effort(repo, "/repo", 90, current_time=NOW)
-        assert len(report.coefficients) == 5
+        assert len(report.coefficients) == 6
 
     def test_files_sorted_by_rei_descending(self):
         changes = [
@@ -1582,7 +1710,7 @@ class TestAnalyzeEffort:
         repo = FakeGitRepository(file_changes_val=changes)
         report = analyze_effort(repo, "/repo", 90, current_time=NOW)
         for f in report.files:
-            assert len(f.attributions) == 5
+            assert len(f.attributions) == 6
 
     def test_attributions_sorted_by_abs_contribution(self):
         changes = [
@@ -1631,6 +1759,19 @@ class TestAnalyzeEffort:
         report_high = analyze_effort(repo, "/repo", 90, current_time=NOW, alpha=100.0)
         assert report_low.alpha == 0.01
         assert report_high.alpha == 100.0
+
+    def test_alpha_auto_tune_picks_best(self):
+        """Default alpha=None → auto-selects from grid search candidates."""
+        changes = [
+            _make_change("a.py", "c1", days_ago=5, added=100, deleted=50),
+            _make_change("a.py", "c2", days_ago=10, added=80, deleted=40),
+            _make_change("b.py", "c1", days_ago=5, added=20, deleted=10),
+            _make_change("c.py", "c3", days_ago=3, added=5, deleted=2),
+        ]
+        repo = FakeGitRepository(file_changes_val=changes)
+        report = analyze_effort(repo, "/repo", 90, current_time=NOW)
+        # Auto-tuned alpha should be from candidates
+        assert report.alpha in [0.1, 0.5, 1.0, 2.0, 5.0]
 
     def test_high_churn_file_gets_high_rei(self):
         """File with extreme churn should get a high REI score."""

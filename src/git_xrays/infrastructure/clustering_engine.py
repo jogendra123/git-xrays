@@ -71,20 +71,61 @@ def _euclidean_dist(a: list[float], b: list[float]) -> float:
     return math.sqrt(sum((ai - bi) ** 2 for ai, bi in zip(a, b)))
 
 
+def _kmeans_plus_plus_init(
+    points: list[list[float]], k: int, rng: random.Random,
+) -> list[list[float]]:
+    """K-Means++ initialization: pick centroids proportional to D² distance.
+
+    Arthur & Vassilvitskii 2007.
+    """
+    n = len(points)
+    if n == 0:
+        return []
+
+    # Pick first centroid uniformly at random
+    centroids = [list(points[rng.randrange(n)])]
+
+    for _ in range(1, k):
+        if len(centroids) >= n:
+            # Pad with last centroid if k > n
+            centroids.append(list(centroids[-1]))
+            continue
+
+        # Compute D² for each point (distance to nearest existing centroid)
+        d2 = []
+        for p in points:
+            min_dist = min(_euclidean_dist(p, c) for c in centroids)
+            d2.append(min_dist ** 2)
+
+        total = sum(d2)
+        if total == 0:
+            # All points are identical; pick any
+            centroids.append(list(points[rng.randrange(n)]))
+            continue
+
+        # Weighted random selection proportional to D²
+        threshold = rng.random() * total
+        cumulative = 0.0
+        for i, dist_sq in enumerate(d2):
+            cumulative += dist_sq
+            if cumulative >= threshold:
+                centroids.append(list(points[i]))
+                break
+        else:
+            centroids.append(list(points[-1]))
+
+    return centroids
+
+
 def kmeans(
     points: list[list[float]], k: int, seed: int = 42, max_iter: int = 100,
 ) -> tuple[list[list[float]], list[int]]:
-    """Lloyd's K-Means algorithm. Returns (centroids, assignments)."""
+    """Lloyd's K-Means algorithm with K-Means++ initialization. Returns (centroids, assignments)."""
     n = len(points)
     dims = len(points[0])
 
     rng = random.Random(seed)
-    indices = rng.sample(range(n), min(k, n))
-    centroids = [list(points[i]) for i in indices]
-
-    # Pad if k > n
-    while len(centroids) < k:
-        centroids.append(list(centroids[-1]))
+    centroids = _kmeans_plus_plus_init(points, k, rng)
 
     assignments = [0] * n
 

@@ -95,6 +95,7 @@ FEATURE_NAMES = [
     "pain_score",
     "knowledge_concentration",
     "author_count",
+    "knowledge_x_pain",
 ]
 
 
@@ -119,12 +120,15 @@ def build_feature_matrix(
         h = hot_map.get(fp)
         k = know_map.get(fp)
         p = pain_map.get(fp)
+        kc = k.knowledge_concentration if k else 0.0
+        ps = p.pain_score if p else 0.0
         row = [
             h.code_churn if h else 0,
             h.change_frequency if h else 0,
-            p.pain_score if p else 0.0,
-            k.knowledge_concentration if k else 0.0,
+            ps,
+            kc,
             k.author_count if k else 1,
+            kc * ps,
         ]
         matrix.append(row)
     return file_paths, matrix
@@ -195,6 +199,50 @@ def ridge_regression(
                 aug[row][j] -= factor * aug[col][j]
 
     return [aug[i][p] for i in range(p)]
+
+
+# ---------------------------------------------------------------------------
+# 4b. Grid search for alpha
+# ---------------------------------------------------------------------------
+
+_DEFAULT_ALPHA_CANDIDATES = [0.1, 0.5, 1.0, 2.0, 5.0]
+
+
+def grid_search_alpha(
+    X: list[list[float]],
+    y: list[float],
+    candidates: list[float] | None = None,
+) -> tuple[float, list[float], float]:
+    """Try each alpha candidate, return (best_alpha, coefficients, r2) with highest R².
+
+    Args:
+        X: n x p feature matrix.
+        y: n-length target vector.
+        candidates: list of alpha values to try. Defaults to [0.1, 0.5, 1.0, 2.0, 5.0].
+
+    Returns:
+        Tuple of (best_alpha, best_coefficients, best_r2).
+    """
+    alphas = candidates or _DEFAULT_ALPHA_CANDIDATES
+    best_alpha = alphas[0]
+    best_coeffs: list[float] = []
+    best_r2 = -float("inf")
+    p = len(X[0])
+    n = len(X)
+
+    for alpha in alphas:
+        coeffs = ridge_regression(X, y, alpha=alpha)
+        y_pred = [
+            sum(X[i][j] * coeffs[j] for j in range(p))
+            for i in range(n)
+        ]
+        r2_val = r_squared(y, y_pred)
+        if r2_val > best_r2:
+            best_r2 = r2_val
+            best_alpha = alpha
+            best_coeffs = coeffs
+
+    return best_alpha, best_coeffs, best_r2
 
 
 # ---------------------------------------------------------------------------

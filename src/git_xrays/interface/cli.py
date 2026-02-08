@@ -752,7 +752,7 @@ def _print_effort(report) -> None:
     )
 
     print(f"Model R²:        {report.model_r_squared:.4f}")
-    print(f"Alpha:           {report.alpha}")
+    print(f"Alpha:           {report.alpha} (auto-tuned)" if isinstance(report.alpha, float) else f"Alpha:           {report.alpha}")
     print()
 
     if not report.files:

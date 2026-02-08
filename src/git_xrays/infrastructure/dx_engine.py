@@ -33,6 +33,15 @@ _LABEL_WEIGHTS: dict[str, float] = {
 
 _MAX_DAILY_RATE = 10.0
 
+# Cognitive load sub-signal weights (sum to 1.0)
+# Complexity dominates because intrinsic complexity is hardest to fix.
+_COGNITIVE_WEIGHTS: dict[str, float] = {
+    "complexity": 0.35,
+    "coordination": 0.25,
+    "knowledge": 0.25,
+    "change_rate": 0.15,
+}
+
 
 def compute_throughput(
     clusters: list[ClusterSummary],
@@ -157,7 +166,12 @@ def compute_cognitive_load_per_file(
         co = norm_coordination[fp]
         ks = norm_knowledge[fp]
         cr = norm_change_rate[fp]
-        composite = (cs + co + ks + cr) / 4.0
+        composite = (
+            _COGNITIVE_WEIGHTS["complexity"] * cs
+            + _COGNITIVE_WEIGHTS["coordination"] * co
+            + _COGNITIVE_WEIGHTS["knowledge"] * ks
+            + _COGNITIVE_WEIGHTS["change_rate"] * cr
+        )
 
         result.append(FileCognitiveLoad(
             file_path=fp,

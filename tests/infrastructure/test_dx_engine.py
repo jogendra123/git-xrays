@@ -234,7 +234,7 @@ class TestComputeCognitiveLoadPerFile:
             assert 0.0 <= f.knowledge_score <= 1.0
             assert 0.0 <= f.change_rate_score <= 1.0
 
-    def test_composite_is_mean(self):
+    def test_composite_is_weighted_sum(self):
         hotspot_files = [
             FileMetrics(file_path="a.py", change_frequency=5,
                         code_churn=50, hotspot_score=0.5, rework_ratio=0.5, file_size=0),
@@ -250,9 +250,49 @@ class TestComputeCognitiveLoadPerFile:
             hotspot_files, knowledge_files, [], [],
         )
         f = result[0]
-        expected = (f.complexity_score + f.coordination_score
-                    + f.knowledge_score + f.change_rate_score) / 4.0
+        expected = (
+            0.35 * f.complexity_score
+            + 0.25 * f.coordination_score
+            + 0.25 * f.knowledge_score
+            + 0.15 * f.change_rate_score
+        )
         assert abs(f.composite_load - expected) < 0.0001
+
+    def test_complexity_weight_dominates(self):
+        """File with high complexity > file with high change_rate (complexity weight 0.35 > 0.15)."""
+        complexity_files = [
+            FileComplexity(
+                file_path="complex.py", function_count=1,
+                total_complexity=20, avg_complexity=20.0,
+                max_complexity=20, worst_function="f",
+                avg_length=50.0, max_length=50,
+                avg_nesting=5.0, max_nesting=5,
+                avg_cognitive=20.0, max_cognitive=20, functions=[],
+            ),
+            FileComplexity(
+                file_path="simple.py", function_count=1,
+                total_complexity=1, avg_complexity=1.0,
+                max_complexity=1, worst_function="g",
+                avg_length=5.0, max_length=5,
+                avg_nesting=1.0, max_nesting=1,
+                avg_cognitive=1.0, max_cognitive=1, functions=[],
+            ),
+        ]
+        hotspot_files = [
+            FileMetrics(file_path="complex.py", change_frequency=1,
+                        code_churn=5, hotspot_score=0.1, rework_ratio=0.0, file_size=0),
+            FileMetrics(file_path="simple.py", change_frequency=20,
+                        code_churn=500, hotspot_score=1.0, rework_ratio=0.9, file_size=0),
+        ]
+        result = compute_cognitive_load_per_file(
+            hotspot_files, [], [], complexity_files,
+        )
+        result_map = {f.file_path: f for f in result}
+        assert result_map["complex.py"].composite_load > result_map["simple.py"].composite_load
+
+    def test_weights_sum_to_one(self):
+        from git_xrays.infrastructure.dx_engine import _COGNITIVE_WEIGHTS
+        assert abs(sum(_COGNITIVE_WEIGHTS.values()) - 1.0) < 1e-9
 
     def test_sorted_by_composite_desc(self):
         hotspot_files = [

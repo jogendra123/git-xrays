@@ -4,6 +4,7 @@ import pytest
 
 from git_xrays.domain.models import CommitFeatures, FileChange
 from git_xrays.infrastructure.clustering_engine import (
+    _kmeans_plus_plus_init,
     auto_select_k,
     compute_cluster_drift,
     extract_commit_features,
@@ -119,6 +120,41 @@ class TestMinMaxNormalize:
         assert result == []
 
 
+# --- K-Means++ Init ---
+
+class TestKMeansPlusPlusInit:
+    def test_basic_two_groups(self):
+        """Two well-separated groups → centroids end up in different groups."""
+        import random
+        points = [[0, 0], [1, 1], [100, 100], [101, 101]]
+        rng = random.Random(42)
+        centroids = _kmeans_plus_plus_init(points, k=2, rng=rng)
+        assert len(centroids) == 2
+        # Check centroids are in different groups
+        group_a = {tuple(p) for p in points[:2]}
+        group_b = {tuple(p) for p in points[2:]}
+        c_tuples = [tuple(c) for c in centroids]
+        in_a = sum(1 for c in c_tuples if c in group_a)
+        in_b = sum(1 for c in c_tuples if c in group_b)
+        assert in_a >= 1 and in_b >= 1
+
+    def test_deterministic_with_same_seed(self):
+        """Same seed → same centroids."""
+        import random
+        points = [[0, 0], [5, 5], [10, 10], [15, 15]]
+        c1 = _kmeans_plus_plus_init(points, k=2, rng=random.Random(42))
+        c2 = _kmeans_plus_plus_init(points, k=2, rng=random.Random(42))
+        assert c1 == c2
+
+    def test_k_greater_than_n(self):
+        """k=5, n=3 → 5 centroids with padding."""
+        import random
+        points = [[0, 0], [5, 5], [10, 10]]
+        rng = random.Random(42)
+        centroids = _kmeans_plus_plus_init(points, k=5, rng=rng)
+        assert len(centroids) == 5
+
+
 # --- Step 4: K-Means ---
 
 class TestKMeans:
@@ -223,11 +259,12 @@ class TestSilhouetteScore:
 
 class TestAutoSelectK:
     def test_finds_k_for_clear_clusters(self):
-        # 3 well-separated groups
+        # 3 well-separated groups with enough points to prevent degeneracy
+        # but at varying intra-cluster distances to discourage further splitting
         points = (
-            [[0, 0], [1, 1], [0, 1], [1, 0]] +
-            [[50, 50], [51, 51], [50, 51], [51, 50]] +
-            [[100, 100], [101, 101], [100, 101], [101, 100]]
+            [[0, 0], [1, 0], [0, 1], [0.5, 0.5], [1, 1], [0, 0.5], [0.5, 0]] +
+            [[50, 50], [51, 50], [50, 51], [50.5, 50.5], [51, 51], [50, 50.5], [50.5, 50]] +
+            [[100, 100], [101, 100], [100, 101], [100.5, 100.5], [101, 101], [100, 100.5], [100.5, 100]]
         )
         k = auto_select_k(points, seed=42)
         assert k == 3

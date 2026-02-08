@@ -12,6 +12,7 @@ from git_xrays.infrastructure.effort_engine import (
     compute_commit_density,
     compute_effort_proxy,
     compute_rei_scores,
+    grid_search_alpha,
     r_squared,
     ridge_regression,
 )
@@ -132,7 +133,7 @@ class TestBuildFeatureMatrix:
         files, matrix = build_feature_matrix(["a.py"], hotspots, knowledge, pain)
         assert files == ["a.py"]
         assert len(matrix) == 1
-        assert matrix[0] == [200, 8, 0.6, 0.7, 4]
+        assert matrix[0] == [200, 8, 0.6, 0.7, 4, 0.7 * 0.6]
 
     def test_missing_from_pain_uses_defaults(self):
         """File missing from pain → pain_score defaults to 0.0."""
@@ -140,14 +141,15 @@ class TestBuildFeatureMatrix:
         knowledge = [_make_knowledge("a.py")]
         files, matrix = build_feature_matrix(["a.py"], hotspots, knowledge, [])
         assert matrix[0][2] == 0.0  # pain_score
+        assert matrix[0][5] == 0.0  # knowledge_x_pain = 0.5 * 0.0
 
     def test_missing_from_all_uses_defaults(self):
         """File not in any report → safe defaults."""
         files, matrix = build_feature_matrix(["a.py"], [], [], [])
-        assert matrix[0] == [0, 0, 0.0, 0.0, 1]
+        assert matrix[0] == [0, 0, 0.0, 0.0, 1, 0.0]
 
     def test_feature_order_correct(self):
-        """Features: [code_churn, change_frequency, pain_score, knowledge_concentration, author_count]."""
+        """Features: [code_churn, change_frequency, pain_score, knowledge_concentration, author_count, knowledge_x_pain]."""
         hotspots = [_make_hotspot("a.py", churn=150, freq=6)]
         knowledge = [_make_knowledge("a.py", kdi=0.3, author_count=2)]
         pain = [_make_pain("a.py", pain=0.5)]
@@ -158,6 +160,7 @@ class TestBuildFeatureMatrix:
         assert row[2] == 0.5    # pain_score
         assert row[3] == 0.3    # knowledge_concentration
         assert row[4] == 2      # author_count
+        assert row[5] == pytest.approx(0.3 * 0.5)  # knowledge_x_pain
 
     def test_multiple_files_rows_match_order(self):
         hotspots = [_make_hotspot("a.py", churn=100), _make_hotspot("b.py", churn=200)]
@@ -168,6 +171,27 @@ class TestBuildFeatureMatrix:
         assert len(matrix) == 2
         assert matrix[0][0] == 100  # a.py churn
         assert matrix[1][0] == 200  # b.py churn
+
+    def test_interaction_feature_computed(self):
+        """Verify knowledge_x_pain = knowledge_concentration * pain_score."""
+        hotspots = [_make_hotspot("a.py")]
+        knowledge = [_make_knowledge("a.py", kdi=0.8)]
+        pain = [_make_pain("a.py", pain=0.6)]
+        _, matrix = build_feature_matrix(["a.py"], hotspots, knowledge, pain)
+        assert matrix[0][5] == pytest.approx(0.8 * 0.6)
+
+    def test_interaction_zero_when_missing(self):
+        """Missing knowledge or pain → interaction feature = 0.0."""
+        # Missing knowledge
+        hotspots = [_make_hotspot("a.py")]
+        pain = [_make_pain("a.py", pain=0.6)]
+        _, matrix = build_feature_matrix(["a.py"], hotspots, [], pain)
+        assert matrix[0][5] == 0.0  # kc=0.0 * 0.6 = 0.0
+
+        # Missing pain
+        knowledge = [_make_knowledge("a.py", kdi=0.8)]
+        _, matrix2 = build_feature_matrix(["a.py"], hotspots, knowledge, [])
+        assert matrix2[0][5] == 0.0  # 0.8 * ps=0.0 = 0.0
 
 
 # --- ridge_regression ---
@@ -243,6 +267,35 @@ class TestRSquared:
         y_true = [5.0, 5.0, 5.0]
         y_pred = [5.0, 5.0, 5.0]
         assert r_squared(y_true, y_pred) == pytest.approx(0.0)
+
+
+# --- grid_search_alpha ---
+
+class TestGridSearchAlpha:
+    def test_returns_best(self):
+        """Grid search picks alpha with highest R²."""
+        X = [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]]
+        y = [2.0, 3.0, 5.0, 7.0, 8.0]
+        best_alpha, coeffs, r2 = grid_search_alpha(X, y)
+        assert best_alpha in [0.1, 0.5, 1.0, 2.0, 5.0]
+        assert len(coeffs) == 2
+        assert r2 >= 0.0
+
+    def test_with_custom_candidates(self):
+        """Custom alpha candidates are respected."""
+        X = [[1, 0], [0, 1], [1, 1]]
+        y = [1.0, 2.0, 3.0]
+        best_alpha, coeffs, r2 = grid_search_alpha(X, y, candidates=[0.01, 10.0])
+        assert best_alpha in [0.01, 10.0]
+        assert len(coeffs) == 2
+
+    def test_lowest_alpha_wins_for_simple_fit(self):
+        """For a clean linear relationship, lower alpha (less regularization) fits better."""
+        X = [[1], [2], [3], [4], [5]]
+        y = [2.0, 4.0, 6.0, 8.0, 10.0]
+        best_alpha, coeffs, r2 = grid_search_alpha(X, y, candidates=[0.001, 100.0])
+        assert best_alpha == 0.001
+        assert r2 > 0.9
 
 
 # --- compute_rei_scores ---
