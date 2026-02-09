@@ -5,6 +5,23 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.error import URLError
+from urllib.request import urlopen
+
+
+def _wait_for_api(api_port: int, timeout_seconds: float = 10.0) -> bool:
+    """Poll the FastAPI health path until it responds or timeout expires."""
+    deadline = time.time() + timeout_seconds
+    url = f"http://localhost:{api_port}/api/repos"
+    while time.time() < deadline:
+        try:
+            with urlopen(url, timeout=1) as response:
+                if response.status == 200:
+                    return True
+        except (URLError, OSError):
+            pass
+        time.sleep(0.2)
+    return False
 
 
 def launch(db_path: str | None = None, api_port: int = 8000) -> None:
@@ -22,8 +39,9 @@ def launch(db_path: str | None = None, api_port: int = 8000) -> None:
     api_thread = threading.Thread(target=_run_api, daemon=True)
     api_thread.start()
 
-    # Give uvicorn a moment to bind the port
-    time.sleep(1)
+    if not _wait_for_api(api_port):
+        print(f"Failed to start API server on http://localhost:{api_port}", file=sys.stderr)
+        sys.exit(1)
 
     dashboard_path = str(
         __import__("pathlib").Path(__file__).parent / "dashboard.py"

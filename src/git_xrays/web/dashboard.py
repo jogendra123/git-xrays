@@ -27,8 +27,14 @@ def fetch(endpoint: str, params: dict | None = None) -> list | dict | None:
             return None
         resp.raise_for_status()
         return resp.json()
+    except httpx.HTTPStatusError as exc:
+        st.error(f"API request failed ({exc.response.status_code}): {endpoint}")
+        return None
     except httpx.ConnectError:
         st.error(f"Cannot connect to API at {API_URL}. Is the server running?")
+        st.stop()
+    except httpx.RequestError as exc:
+        st.error(f"API request error: {exc}")
         st.stop()
 
 
@@ -376,9 +382,9 @@ with tabs[8]:
             for i, (key, val) in enumerate(delta_items):
                 col = delta_cols[i % 3]
                 label = key.replace("_", " ").title()
-                color = "normal" if key == "dx_cognitive_load" else "normal"
-                col.metric(label, f"{getattr(run_b, key, val):.4f}" if isinstance(val, float) else str(val),
-                           delta=f"{val:+.6f}" if val != 0 else "0")
+                run_b_value = run_b.get(key, val)
+                value_text = f"{run_b_value:.4f}" if isinstance(run_b_value, (int, float)) else str(run_b_value)
+                col.metric(label, value_text, delta=f"{val:+.6f}" if val != 0 else "0")
 
             st.divider()
 
