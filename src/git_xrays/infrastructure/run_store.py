@@ -40,10 +40,10 @@ class RunStore:
                 developer_risk_index     DOUBLE NOT NULL,
                 knowledge_island_count   INTEGER NOT NULL,
                 coupling_pair_count      INTEGER NOT NULL,
-                anemia_total_classes     INTEGER NOT NULL,
-                anemia_anemic_count      INTEGER NOT NULL,
-                anemia_anemic_pct        DOUBLE NOT NULL,
-                anemia_average_ams       DOUBLE NOT NULL,
+                anemic_total_classes     INTEGER NOT NULL,
+                anemic_anemic_count      INTEGER NOT NULL,
+                anemic_anemic_pct        DOUBLE NOT NULL,
+                anemic_average_ams       DOUBLE NOT NULL,
                 complexity_total_functions INTEGER NOT NULL,
                 complexity_avg           DOUBLE NOT NULL,
                 complexity_max           INTEGER NOT NULL,
@@ -58,7 +58,11 @@ class RunStore:
                 dx_feedback_delay        DOUBLE NOT NULL,
                 dx_focus_ratio           DOUBLE NOT NULL,
                 dx_cognitive_load        DOUBLE NOT NULL,
-                dx_weights               VARCHAR NOT NULL
+                dx_weights               VARCHAR NOT NULL,
+                god_class_total_classes  INTEGER NOT NULL DEFAULT 0,
+                god_class_god_count      INTEGER NOT NULL DEFAULT 0,
+                god_class_god_pct        DOUBLE NOT NULL DEFAULT 0.0,
+                god_class_average_gcs    DOUBLE NOT NULL DEFAULT 0.0
             )
         """)
         self._conn.execute("""
@@ -110,7 +114,7 @@ class RunStore:
             )
         """)
         self._conn.execute("""
-            CREATE TABLE IF NOT EXISTS anemia_classes (
+            CREATE TABLE IF NOT EXISTS anemic_classes (
                 run_id     VARCHAR NOT NULL,
                 file_path  VARCHAR NOT NULL,
                 class_name VARCHAR NOT NULL,
@@ -177,6 +181,19 @@ class RunStore:
                 PRIMARY KEY (run_id, file_path)
             )
         """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS god_class_classes (
+                run_id          VARCHAR NOT NULL,
+                file_path       VARCHAR NOT NULL,
+                class_name      VARCHAR NOT NULL,
+                method_count    INTEGER NOT NULL,
+                field_count     INTEGER NOT NULL,
+                total_complexity INTEGER NOT NULL,
+                cohesion        DOUBLE NOT NULL,
+                god_class_score DOUBLE NOT NULL,
+                PRIMARY KEY (run_id, file_path, class_name)
+            )
+        """)
 
     def _migrate(self) -> None:
         """Apply schema migrations for columns added after initial release."""
@@ -185,6 +202,10 @@ class RunStore:
             ("complexity_functions", "cognitive_complexity", "INTEGER"),
             ("coupling_pairs", "expected_cochange", "DOUBLE"),
             ("coupling_pairs", "lift", "DOUBLE"),
+            ("runs", "god_class_total_classes", "INTEGER"),
+            ("runs", "god_class_god_count", "INTEGER"),
+            ("runs", "god_class_god_pct", "DOUBLE"),
+            ("runs", "god_class_average_gcs", "DOUBLE"),
         ]
         for table, column, col_type in migrations:
             try:
@@ -213,8 +234,9 @@ class RunStore:
         hotspot,
         knowledge,
         coupling,
-        anemia,
+        anemic,
         complexity,
+        god_class,
         clustering,
         effort,
         dx,
@@ -233,7 +255,8 @@ class RunStore:
                     ?, ?, ?, ?,
                     ?, ?,
                     ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?
                 )""",
                 [
                     run_id,
@@ -252,11 +275,11 @@ class RunStore:
                     knowledge.knowledge_island_count,
                     # coupling
                     len(coupling.coupling_pairs),
-                    # anemia
-                    anemia.total_classes,
-                    anemia.anemic_count,
-                    anemia.anemic_percentage,
-                    anemia.average_ams,
+                    # anemic
+                    anemic.total_classes,
+                    anemic.anemic_count,
+                    anemic.anemic_percentage,
+                    anemic.average_ams,
                     # complexity
                     complexity.total_functions,
                     complexity.avg_complexity,
@@ -276,6 +299,11 @@ class RunStore:
                     dx.metrics.focus_ratio,
                     dx.metrics.cognitive_load,
                     json.dumps(dx.weights),
+                    # god class
+                    god_class.total_classes,
+                    god_class.god_class_count,
+                    god_class.god_class_percentage,
+                    god_class.average_gcs,
                 ],
             )
 
@@ -296,8 +324,8 @@ class RunStore:
                 fp.distance_normalized, fp.pain_score])
 
             # Flatten nested: files → classes
-            self._insert_rows("anemia_classes", run_id,
-                [cm for fa in anemia.files for cm in fa.classes], lambda cm: [
+            self._insert_rows("anemic_classes", run_id,
+                [cm for fa in anemic.files for cm in fa.classes], lambda cm: [
                 cm.file_path, cm.class_name, cm.field_count,
                 cm.behavior_method_count, cm.dbsi, cm.ams])
 
@@ -322,6 +350,13 @@ class RunStore:
             self._insert_rows("dx_cognitive_files", run_id, dx.cognitive_load_files, lambda df: [
                 df.file_path, df.complexity_score, df.coordination_score,
                 df.knowledge_score, df.change_rate_score, df.composite_load])
+
+            # Flatten nested: files → god classes
+            self._insert_rows("god_class_classes", run_id,
+                [gc for fg in god_class.files for gc in fg.classes], lambda gc: [
+                gc.file_path, gc.class_name, gc.method_count,
+                gc.field_count, gc.total_complexity, gc.cohesion,
+                gc.god_class_score])
 
             self._conn.commit()
         except Exception:
@@ -393,8 +428,8 @@ class RunStore:
     def get_file_pain(self, run_id: str) -> list[dict]:
         return self._query_child("file_pain", run_id)
 
-    def get_anemia_classes(self, run_id: str) -> list[dict]:
-        return self._query_child("anemia_classes", run_id)
+    def get_anemic_classes(self, run_id: str) -> list[dict]:
+        return self._query_child("anemic_classes", run_id)
 
     def get_complexity_functions(self, run_id: str) -> list[dict]:
         return self._query_child("complexity_functions", run_id)
@@ -410,6 +445,9 @@ class RunStore:
 
     def get_dx_cognitive_files(self, run_id: str) -> list[dict]:
         return self._query_child("dx_cognitive_files", run_id)
+
+    def get_god_classes(self, run_id: str) -> list[dict]:
+        return self._query_child("god_class_classes", run_id)
 
     def close(self) -> None:
         """Close the DuckDB connection."""

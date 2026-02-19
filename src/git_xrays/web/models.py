@@ -29,10 +29,10 @@ class RunDetail(BaseModel):
     developer_risk_index: float
     knowledge_island_count: int
     coupling_pair_count: int
-    anemia_total_classes: int
-    anemia_anemic_count: int
-    anemia_anemic_pct: float
-    anemia_average_ams: float
+    anemic_total_classes: int
+    anemic_anemic_count: int
+    anemic_anemic_pct: float
+    anemic_average_ams: float
     complexity_total_functions: int
     complexity_avg: float
     complexity_max: int
@@ -48,6 +48,10 @@ class RunDetail(BaseModel):
     dx_focus_ratio: float
     dx_cognitive_load: float
     dx_weights: list[float]
+    god_class_total_classes: int = 0
+    god_class_god_count: int = 0
+    god_class_god_pct: float = 0.0
+    god_class_average_gcs: float = 0.0
 
 
 class HotspotFile(BaseModel):
@@ -90,7 +94,7 @@ class FilePainRow(BaseModel):
     pain_score: float
 
 
-class AnemiaClassRow(BaseModel):
+class AnemicClassRow(BaseModel):
     run_id: str
     file_path: str
     class_name: str
@@ -145,6 +149,17 @@ class CognitiveRow(BaseModel):
     knowledge_score: float
     change_rate_score: float
     composite_load: float
+
+
+class GodClassRow(BaseModel):
+    run_id: str
+    file_path: str
+    class_name: str
+    method_count: int
+    field_count: int
+    total_complexity: int
+    cohesion: float
+    god_class_score: float
 
 
 class RunComparison(BaseModel):

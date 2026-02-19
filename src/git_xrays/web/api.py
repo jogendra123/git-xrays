@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 from git_xrays.infrastructure.run_store import RunStore
 from git_xrays.web.models import (
-    AnemiaClassRow,
+    AnemicClassRow,
     ClusterRow,
     CognitiveRow,
     ComplexityFnRow,
@@ -15,6 +15,7 @@ from git_xrays.web.models import (
     DriftRow,
     EffortFileRow,
     FilePainRow,
+    GodClassRow,
     HotspotFile,
     KnowledgeFile,
     RunComparison,
@@ -72,12 +73,13 @@ _CHILD_ENDPOINTS: list[tuple[str, type, str]] = [
     ("knowledge", KnowledgeFile, "get_knowledge_files"),
     ("coupling", CouplingPairRow, "get_coupling_pairs"),
     ("pain", FilePainRow, "get_file_pain"),
-    ("anemia", AnemiaClassRow, "get_anemia_classes"),
+    ("anemic", AnemicClassRow, "get_anemic_classes"),
     ("complexity", ComplexityFnRow, "get_complexity_functions"),
     ("clusters", ClusterRow, "get_cluster_summaries"),
     ("drift", DriftRow, "get_cluster_drift"),
     ("effort", EffortFileRow, "get_effort_files"),
     ("cognitive", CognitiveRow, "get_dx_cognitive_files"),
+    ("god-classes", GodClassRow, "get_god_classes"),
 ]
 
 
@@ -114,8 +116,9 @@ def compare_runs(
     delta_fields = [
         "dx_score", "dx_throughput", "dx_feedback_delay",
         "dx_focus_ratio", "dx_cognitive_load",
-        "complexity_avg", "anemia_anemic_pct",
+        "complexity_avg", "anemic_anemic_pct",
         "effort_model_r_squared", "clustering_silhouette",
+        "god_class_god_pct",
     ]
     deltas = {}
     for field in delta_fields:

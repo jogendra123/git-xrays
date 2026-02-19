@@ -4,12 +4,13 @@ import sys
 
 from git_xrays.application.use_cases import (
     _resolve_ref_to_datetime,
-    analyze_anemia,
+    analyze_anemic,
     analyze_change_clusters,
     analyze_complexity,
     analyze_coupling,
     analyze_dx,
     analyze_effort,
+    analyze_god_classes,
     analyze_hotspots,
     analyze_knowledge,
     compare_hotspots,
@@ -126,7 +127,7 @@ def main() -> None:
         help="Show temporal coupling and PAIN analysis",
     )
     parser.add_argument(
-        "--anemia",
+        "--anemic",
         action="store_true",
         help="Show anemic domain model analysis",
     )
@@ -134,6 +135,12 @@ def main() -> None:
         "--complexity",
         action="store_true",
         help="Show function-level complexity analysis",
+    )
+    parser.add_argument(
+        "--god-class",
+        dest="god_class",
+        action="store_true",
+        help="Show god class detection analysis",
     )
     parser.add_argument(
         "--clustering",
@@ -307,12 +314,12 @@ def main() -> None:
         print()
         _print_pain(coupling_report)
 
-    if args.anemia:
+    if args.anemic:
         source_reader = GitSourceReader(args.repo_path)
         ref = args.at if args.at else None
-        anemia_report = analyze_anemia(source_reader, args.repo_path, ref=ref)
+        anemic_report = analyze_anemic(source_reader, args.repo_path, ref=ref)
         print()
-        _print_anemia(anemia_report)
+        _print_anemic(anemic_report)
 
     if args.complexity:
         source_reader = GitSourceReader(args.repo_path)
@@ -320,6 +327,13 @@ def main() -> None:
         complexity_report = analyze_complexity(source_reader, args.repo_path, ref=ref)
         print()
         _print_complexity(complexity_report)
+
+    if args.god_class:
+        source_reader = GitSourceReader(args.repo_path)
+        ref = args.at if args.at else None
+        god_class_report = analyze_god_classes(source_reader, args.repo_path, ref=ref)
+        print()
+        _print_god_classes(god_class_report)
 
     if args.clustering:
         clustering_report = analyze_change_clusters(
@@ -382,15 +396,20 @@ def _run_all(args, git_reader, summary, current_time) -> None:
     print()
     _print_pain(coupling_report)
 
-    # 4. Anemia
-    anemia_report = analyze_anemia(source_reader, args.repo_path, ref=ref)
+    # 4. Anemic
+    anemic_report = analyze_anemic(source_reader, args.repo_path, ref=ref)
     print()
-    _print_anemia(anemia_report)
+    _print_anemic(anemic_report)
 
     # 5. Complexity
     complexity_report = analyze_complexity(source_reader, args.repo_path, ref=ref)
     print()
     _print_complexity(complexity_report)
+
+    # 5b. God Classes
+    god_class_report = analyze_god_classes(source_reader, args.repo_path, ref=ref)
+    print()
+    _print_god_classes(god_class_report)
 
     # 6. Clustering
     clustering_report = analyze_change_clusters(
@@ -420,8 +439,8 @@ def _run_all(args, git_reader, summary, current_time) -> None:
     store.save_run(
         run_id, args.repo_path, args.window, summary,
         hotspot_report, knowledge_report, coupling_report,
-        anemia_report, complexity_report, clustering_report,
-        effort_report, dx_report,
+        anemic_report, complexity_report, god_class_report,
+        clustering_report, effort_report, dx_report,
     )
     store.close()
     print(f"\nRun stored: {run_id}")
@@ -627,7 +646,7 @@ def _print_comparison(report) -> None:
     )
 
 
-def _print_anemia(report) -> None:
+def _print_anemic(report) -> None:
     print(
         f"--- Anemia Analysis "
         f"({report.total_classes} classes in {report.total_files} files) ---\n"
@@ -685,6 +704,80 @@ def _print_complexity(report) -> None:
             ("Max Len", ">7", lambda f: f.max_length),
         ],
     )
+
+
+def _print_god_classes(report) -> None:
+    print(
+        f"--- God Class Analysis "
+        f"({report.total_classes} classes in {report.total_files} files) ---\n"
+    )
+
+    print(f"Total classes:       {report.total_classes}")
+    print(
+        f"God classes:         {report.god_class_count} "
+        f"({report.god_class_percentage}%)"
+    )
+    print(f"Average GCS:         {report.average_gcs:.4f}")
+    print()
+
+    if not report.files:
+        print("No source files with classes found.")
+        return
+
+    _print_table(
+        report.files,
+        [
+            ("File", None, None),
+            ("Classes", ">7", lambda f: f.class_count),
+            ("God", ">3", lambda f: f.god_class_count),
+            ("Worst GCS", ">9.4f", lambda f: f.worst_gcs),
+        ],
+    )
+
+    # List individual god classes
+    god_classes = [
+        c for f in report.files for c in f.classes
+        if c.god_class_score > report.gcs_threshold
+    ]
+    god_classes.sort(key=lambda c: c.god_class_score, reverse=True)
+
+    if god_classes:
+        print()
+        print(f"God Classes (GCS > {report.gcs_threshold}):\n")
+
+        path_w = min(max(len(c.file_path) for c in god_classes), 40)
+        name_w = min(max(len(c.class_name) for c in god_classes), 25)
+        header = (
+            f"{'File':<{path_w}}  "
+            f"{'Class':<{name_w}}  "
+            f"{'Methods':>7}  "
+            f"{'Fields':>6}  "
+            f"{'WMC':>5}  "
+            f"{'Cohesion':>8}  "
+            f"{'GCS':>6}"
+        )
+        print(header)
+        print("-" * len(header))
+
+        for c in god_classes[:20]:
+            fp = c.file_path
+            if len(fp) > path_w:
+                fp = "..." + fp[-(path_w - 3):]
+            cn = c.class_name
+            if len(cn) > name_w:
+                cn = cn[:name_w - 3] + "..."
+            print(
+                f"{fp:<{path_w}}  "
+                f"{cn:<{name_w}}  "
+                f"{c.method_count:>7}  "
+                f"{c.field_count:>6}  "
+                f"{c.total_complexity:>5}  "
+                f"{c.cohesion:>8.4f}  "
+                f"{c.god_class_score:>6.4f}"
+            )
+
+        if len(god_classes) > 20:
+            print(f"  ... and {len(god_classes) - 20} more god classes")
 
 
 def _print_clustering(report) -> None:

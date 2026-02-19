@@ -210,6 +210,45 @@ class AnemicReport:
 
 
 @dataclass(frozen=True)
+class GodClassMetrics:
+    """God class metrics for a single class."""
+
+    class_name: str
+    file_path: str
+    method_count: int           # non-dunder, non-property methods
+    field_count: int
+    total_complexity: int       # WMC: sum of cyclomatic complexity
+    cohesion: float             # TCC: tight class cohesion [0.0-1.0]
+    god_class_score: float      # composite GCS [0.0-1.0]
+
+
+@dataclass(frozen=True)
+class FileGodClass:
+    """God class detection results for a single file."""
+
+    file_path: str
+    class_count: int
+    god_class_count: int
+    worst_gcs: float            # highest GCS (0.0 if no classes)
+    classes: list[GodClassMetrics]  # sorted by god_class_score desc
+
+
+@dataclass(frozen=True)
+class GodClassReport:
+    """God class detection report across all files."""
+
+    repo_path: str
+    ref: str | None
+    total_files: int
+    total_classes: int
+    god_class_count: int
+    god_class_percentage: float  # god_class_count / total_classes * 100
+    average_gcs: float
+    gcs_threshold: float         # default 0.6
+    files: list[FileGodClass]    # sorted by worst_gcs desc
+
+
+@dataclass(frozen=True)
 class FunctionComplexity:
     """Complexity metrics for a single function or method."""
 

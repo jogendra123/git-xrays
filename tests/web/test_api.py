@@ -22,10 +22,13 @@ from git_xrays.domain.models import (
     FileCognitiveLoad,
     FileComplexity,
     FileEffort,
+    FileGodClass,
     FileKnowledge,
     FileMetrics,
     FilePain,
     FunctionComplexity,
+    GodClassMetrics,
+    GodClassReport,
     HotspotReport,
     KnowledgeReport,
     RepoSummary,
@@ -52,7 +55,7 @@ def _make_all_reports():
     ], [
         FilePain("src/a.py", 100, 1.0, 5, 1.0, 0.75, 1.0, 1.0),
     ])
-    anemia = AnemicReport("/repo", None, 1, 1, 1, 100.0, 0.75, 0.5, [
+    anemic = AnemicReport("/repo", None, 1, 1, 1, 100.0, 0.75, 0.5, [
         FileAnemic("src/a.py", 1, 1, 0.75, [
             ClassMetrics("UserDTO", "src/a.py", 3, 2, 0, 0, 0, 1.0, 0.0, 1.0, 0.75),
         ], 2),
@@ -86,7 +89,13 @@ def _make_all_reports():
         DXMetrics(0.8, 0.7, 0.65, 0.35), [
             FileCognitiveLoad("src/a.py", 0.6, 0.5, 0.4, 0.3, 0.45),
         ])
-    return summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx
+    god_class = GodClassReport("/repo", None, 1, 2, 1, 50.0, 0.55, 0.6, [
+        FileGodClass("src/a.py", 2, 1, 0.8, [
+            GodClassMetrics("GodService", "src/a.py", 15, 8, 45, 0.2, 0.8),
+            GodClassMetrics("SmallHelper", "src/a.py", 2, 1, 3, 0.9, 0.3),
+        ]),
+    ])
+    return summary, hotspot, knowledge, coupling, anemic, complexity, god_class, clustering, effort, dx
 
 
 @pytest.fixture
@@ -94,13 +103,13 @@ def client(tmp_path):
     db_file = str(tmp_path / "test.db")
     app.state.db_path = db_file
     store = RunStore(db_path=db_file)
-    summary, hotspot, knowledge, coupling, anemia, complexity, clustering, effort, dx = _make_all_reports()
+    summary, hotspot, knowledge, coupling, anemic, complexity, god_class, clustering, effort, dx = _make_all_reports()
     store.save_run("run-1", "/repo-a", 90, summary, hotspot, knowledge,
-                    coupling, anemia, complexity, clustering, effort, dx)
+                    coupling, anemic, complexity, god_class, clustering, effort, dx)
     store.save_run("run-2", "/repo-a", 90, summary, hotspot, knowledge,
-                    coupling, anemia, complexity, clustering, effort, dx)
+                    coupling, anemic, complexity, god_class, clustering, effort, dx)
     store.save_run("run-3", "/repo-b", 90, summary, hotspot, knowledge,
-                    coupling, anemia, complexity, clustering, effort, dx)
+                    coupling, anemic, complexity, god_class, clustering, effort, dx)
     store.close()
     with TestClient(app) as c:
         yield c
@@ -195,9 +204,9 @@ class TestPain:
         assert len(data) == 1
 
 
-class TestAnemia:
-    def test_returns_anemia_classes(self, client):
-        resp = client.get("/api/runs/run-1/anemia")
+class TestAnemic:
+    def test_returns_anemic_classes(self, client):
+        resp = client.get("/api/runs/run-1/anemic")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1
@@ -267,3 +276,40 @@ class TestCompare:
         resp = client.get("/api/compare", params={"a": "run-1", "b": "run-2"})
         data = resp.json()
         assert data["deltas"]["dx_score"] == 0.0
+
+    def test_deltas_include_god_class(self, client):
+        resp = client.get("/api/compare", params={"a": "run-1", "b": "run-2"})
+        data = resp.json()
+        assert "god_class_god_pct" in data["deltas"]
+
+
+class TestGodClasses:
+    def test_returns_god_classes(self, client):
+        resp = client.get("/api/runs/run-1/god-classes")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        names = {c["class_name"] for c in data}
+        assert names == {"GodService", "SmallHelper"}
+
+    def test_god_class_fields(self, client):
+        resp = client.get("/api/runs/run-1/god-classes")
+        data = resp.json()
+        god = next(c for c in data if c["class_name"] == "GodService")
+        assert god["method_count"] == 15
+        assert god["field_count"] == 8
+        assert god["total_complexity"] == 45
+        assert god["cohesion"] == 0.2
+        assert god["god_class_score"] == 0.8
+
+    def test_404_for_missing_run(self, client):
+        resp = client.get("/api/runs/nonexistent/god-classes")
+        assert resp.status_code == 404
+
+    def test_run_detail_has_god_class_fields(self, client):
+        resp = client.get("/api/runs/run-1")
+        data = resp.json()
+        assert data["god_class_total_classes"] == 2
+        assert data["god_class_god_count"] == 1
+        assert data["god_class_god_pct"] == 50.0
+        assert data["god_class_average_gcs"] == 0.55

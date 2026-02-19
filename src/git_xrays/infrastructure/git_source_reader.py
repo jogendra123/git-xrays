@@ -31,6 +31,14 @@ class GitSourceReader:
             if line.endswith(".py")
         )
 
+    def list_java_files(self, ref: str | None = None) -> list[str]:
+        tree_ref = ref or "HEAD"
+        output = self._run("ls-tree", "-r", "--name-only", tree_ref)
+        return sorted(
+            line for line in output.splitlines()
+            if line.endswith(".java")
+        )
+
     def read_file(self, file_path: str, ref: str | None = None) -> str:
         tree_ref = ref or "HEAD"
         return self._run("show", f"{tree_ref}:{file_path}")

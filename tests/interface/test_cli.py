@@ -299,35 +299,35 @@ class TestCompareFlags:
         assert "30-day window" in captured.out
 
 
-class TestAnemiaCli:
+class TestAnemicCli:
     def test_anemic_flag_prints_section(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemic_repo), "--anemia"],
+            ["analyze-repo", str(anemic_repo), "--anemic"],
         )
         main()
         captured = capsys.readouterr()
         assert "Anemia Analysis" in captured.out
 
-    def test_anemia_shows_total_classes(self, anemic_repo, capsys, monkeypatch):
+    def test_anemic_shows_total_classes(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemic_repo), "--anemia"],
+            ["analyze-repo", str(anemic_repo), "--anemic"],
         )
         main()
         captured = capsys.readouterr()
         assert "Total classes:" in captured.out
 
-    def test_anemia_shows_anemic_count(self, anemic_repo, capsys, monkeypatch):
+    def test_anemic_shows_anemic_count(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemic_repo), "--anemia"],
+            ["analyze-repo", str(anemic_repo), "--anemic"],
         )
         main()
         captured = capsys.readouterr()
         assert "Anemic classes:" in captured.out
 
-    def test_no_anemia_flag_no_section(self, anemic_repo, capsys, monkeypatch):
+    def test_no_anemic_flag_no_section(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
             ["analyze-repo", str(anemic_repo)],
@@ -336,10 +336,10 @@ class TestAnemiaCli:
         captured = capsys.readouterr()
         assert "Anemia Analysis" not in captured.out
 
-    def test_anemia_with_at_flag(self, anemic_repo, capsys, monkeypatch):
+    def test_anemic_with_at_flag(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
             sys, "argv",
-            ["analyze-repo", str(anemic_repo), "--anemia", "--at", "HEAD"],
+            ["analyze-repo", str(anemic_repo), "--anemic", "--at", "HEAD"],
         )
         main()
         captured = capsys.readouterr()
@@ -793,6 +793,55 @@ class TestDbFlag:
         from pathlib import Path
         assert Path(db_file).exists()
 
+class TestGodClassCli:
+    def test_god_class_flag_prints_section(self, god_class_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(god_class_repo), "--god-class"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "God Class Analysis" in captured.out
+
+    def test_god_class_shows_total_classes(self, god_class_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(god_class_repo), "--god-class"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "Total classes:" in captured.out
+
+    def test_god_class_shows_count(self, god_class_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(god_class_repo), "--god-class"],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "God classes:" in captured.out
+
+    def test_no_god_class_flag_no_section(self, god_class_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(god_class_repo)],
+        )
+        main()
+        captured = capsys.readouterr()
+        assert "God Class Analysis" not in captured.out
+
+    def test_god_class_lists_flagged_classes(self, god_class_repo, capsys, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["analyze-repo", str(god_class_repo), "--god-class"],
+        )
+        main()
+        captured = capsys.readouterr()
+        # GodClass should be listed somewhere (either in file table or individual listing)
+        assert "GodClass" in captured.out or "god.py" in captured.out
+
+
+class TestDbFlagListRuns:
     def test_db_with_list_runs(self, tmp_path, capsys, monkeypatch):
         db_file = str(tmp_path / "test.db")
         monkeypatch.setattr(

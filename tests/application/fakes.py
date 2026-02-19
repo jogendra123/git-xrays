@@ -57,7 +57,10 @@ class FakeSourceCodeReader:
         self._files = files or {}
 
     def list_python_files(self, ref: str | None = None) -> list[str]:
-        return sorted(self._files.keys())
+        return sorted(k for k in self._files if k.endswith(".py"))
+
+    def list_java_files(self, ref: str | None = None) -> list[str]:
+        return sorted(k for k in self._files if k.endswith(".java"))
 
     def read_file(self, file_path: str, ref: str | None = None) -> str:
         if file_path not in self._files:

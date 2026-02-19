@@ -19,10 +19,13 @@ from git_xrays.domain.models import (
     FileChange,
     FileComplexity,
     FileEffort,
+    FileGodClass,
     FileHotspotDelta,
     FileKnowledge,
     FileMetrics,
     FilePain,
+    GodClassMetrics,
+    GodClassReport,
     HotspotReport,
     KnowledgeReport,
     RepoSummary,
@@ -42,6 +45,13 @@ from git_xrays.infrastructure.clustering_engine import (
     silhouette_score as compute_silhouette,
 )
 from git_xrays.infrastructure.complexity_analyzer import analyze_file_complexity
+from git_xrays.infrastructure.java_complexity_analyzer import analyze_java_file_complexity
+from git_xrays.infrastructure.god_class_analyzer import analyze_python_god_classes
+from git_xrays.infrastructure.java_anemic_analyzer import (
+    analyze_java_file_anemic,
+    compute_java_touch_counts,
+)
+from git_xrays.infrastructure.java_god_class_analyzer import analyze_java_god_classes
 from git_xrays.infrastructure.dx_engine import (
     compute_cognitive_load_per_file,
     compute_dx_score,
@@ -543,16 +553,17 @@ def compare_hotspots(
     )
 
 
-def analyze_anemia(
+def analyze_anemic(
     source_reader: SourceCodeReader,
     repo_path: str,
     ref: str | None = None,
     ams_threshold: float = 0.5,
 ) -> AnemicReport:
-    """Analyze Python files for anemic domain model patterns."""
+    """Analyze Python and Java files for anemic domain model patterns."""
     py_files = source_reader.list_python_files(ref=ref)
+    java_files = source_reader.list_java_files(ref=ref)
 
-    if not py_files:
+    if not py_files and not java_files:
         return AnemicReport(
             repo_path=repo_path, ref=ref,
             total_files=0, total_classes=0,
@@ -561,28 +572,49 @@ def analyze_anemia(
             files=[],
         )
 
-    # Read all sources for touch count analysis
-    file_sources: dict[str, str] = {}
+    file_results: list[FileAnemic] = []
+
+    # --- Python files ---
+    py_sources: dict[str, str] = {}
     for fp in py_files:
         try:
-            file_sources[fp] = source_reader.read_file(fp, ref=ref)
+            py_sources[fp] = source_reader.read_file(fp, ref=ref)
         except FileNotFoundError:
             continue
 
-    touch_counts = compute_touch_counts(file_sources)
+    py_touch_counts = compute_touch_counts(py_sources)
 
-    # Analyze each file
-    file_results: list[FileAnemic] = []
-    for fp, source in file_sources.items():
+    for fp, source in py_sources.items():
         fa = analyze_file(source, fp, ams_threshold=ams_threshold)
-        # Replace touch_count with computed value
         fa = FileAnemic(
             file_path=fa.file_path,
             class_count=fa.class_count,
             anemic_class_count=fa.anemic_class_count,
             worst_ams=fa.worst_ams,
             classes=fa.classes,
-            touch_count=touch_counts.get(fp, 0),
+            touch_count=py_touch_counts.get(fp, 0),
+        )
+        file_results.append(fa)
+
+    # --- Java files ---
+    java_sources: dict[str, str] = {}
+    for fp in java_files:
+        try:
+            java_sources[fp] = source_reader.read_file(fp, ref=ref)
+        except FileNotFoundError:
+            continue
+
+    java_touch_counts = compute_java_touch_counts(java_sources)
+
+    for fp, source in java_sources.items():
+        fa = analyze_java_file_anemic(source, fp, ams_threshold=ams_threshold)
+        fa = FileAnemic(
+            file_path=fa.file_path,
+            class_count=fa.class_count,
+            anemic_class_count=fa.anemic_class_count,
+            worst_ams=fa.worst_ams,
+            classes=fa.classes,
+            touch_count=java_touch_counts.get(fp, 0),
         )
         file_results.append(fa)
 
@@ -613,10 +645,11 @@ def analyze_complexity(
     ref: str | None = None,
     complexity_threshold: int = 10,
 ) -> ComplexityReport:
-    """Analyze Python files for function-level cyclomatic complexity."""
+    """Analyze Python and Java files for function-level cyclomatic complexity."""
     py_files = source_reader.list_python_files(ref=ref)
+    java_files = source_reader.list_java_files(ref=ref)
 
-    if not py_files:
+    if not py_files and not java_files:
         return ComplexityReport(
             repo_path=repo_path, ref=ref,
             total_files=0, total_functions=0,
@@ -628,12 +661,24 @@ def analyze_complexity(
         )
 
     file_results: list[FileComplexity] = []
+
+    # --- Python files ---
     for fp in py_files:
         try:
             source = source_reader.read_file(fp, ref=ref)
         except FileNotFoundError:
             continue
         fc = analyze_file_complexity(source, fp)
+        if fc.function_count > 0:
+            file_results.append(fc)
+
+    # --- Java files ---
+    for fp in java_files:
+        try:
+            source = source_reader.read_file(fp, ref=ref)
+        except FileNotFoundError:
+            continue
+        fc = analyze_java_file_complexity(source, fp)
         if fc.function_count > 0:
             file_results.append(fc)
 
@@ -1023,4 +1068,134 @@ def analyze_dx(
         weights=w,
         metrics=metrics,
         cognitive_load_files=cognitive_files,
+    )
+
+
+def _min_max(values: list[float]) -> tuple[float, float]:
+    """Return (min, max) of values, or (0, 0) if empty."""
+    if not values:
+        return 0.0, 0.0
+    return min(values), max(values)
+
+
+def _normalize(value: float, lo: float, hi: float) -> float:
+    """Min-max normalize a value to [0, 1]."""
+    if hi == lo:
+        return 0.0
+    return (value - lo) / (hi - lo)
+
+
+def analyze_god_classes(
+    source_reader: SourceCodeReader,
+    repo_path: str,
+    ref: str | None = None,
+    gcs_threshold: float = 0.6,
+) -> GodClassReport:
+    """Analyze Python and Java files for god class patterns."""
+    py_files = source_reader.list_python_files(ref=ref)
+    java_files = source_reader.list_java_files(ref=ref)
+
+    if not py_files and not java_files:
+        return GodClassReport(
+            repo_path=repo_path, ref=ref,
+            total_files=0, total_classes=0,
+            god_class_count=0, god_class_percentage=0.0,
+            average_gcs=0.0, gcs_threshold=gcs_threshold,
+            files=[],
+        )
+
+    # Phase 1: Collect raw metrics from all files
+    raw_file_results: list[FileGodClass] = []
+
+    for fp in py_files:
+        try:
+            source = source_reader.read_file(fp, ref=ref)
+        except FileNotFoundError:
+            continue
+        raw_file_results.append(analyze_python_god_classes(source, fp))
+
+    for fp in java_files:
+        try:
+            source = source_reader.read_file(fp, ref=ref)
+        except FileNotFoundError:
+            continue
+        raw_file_results.append(analyze_java_god_classes(source, fp))
+
+    # Collect all classes across all files
+    all_classes: list[GodClassMetrics] = [
+        c for f in raw_file_results for c in f.classes
+    ]
+
+    if not all_classes:
+        return GodClassReport(
+            repo_path=repo_path, ref=ref,
+            total_files=len(raw_file_results), total_classes=0,
+            god_class_count=0, god_class_percentage=0.0,
+            average_gcs=0.0, gcs_threshold=gcs_threshold,
+            files=raw_file_results,
+        )
+
+    # Phase 2: Min-max normalize across all classes
+    mc_lo, mc_hi = _min_max([float(c.method_count) for c in all_classes])
+    tc_lo, tc_hi = _min_max([float(c.total_complexity) for c in all_classes])
+    fc_lo, fc_hi = _min_max([float(c.field_count) for c in all_classes])
+
+    # Phase 3: Compute GCS and rebuild
+    scored_classes: list[GodClassMetrics] = []
+    for c in all_classes:
+        n_mc = _normalize(float(c.method_count), mc_lo, mc_hi)
+        n_tc = _normalize(float(c.total_complexity), tc_lo, tc_hi)
+        n_fc = _normalize(float(c.field_count), fc_lo, fc_hi)
+        gcs = round(
+            0.3 * n_mc + 0.3 * n_tc + 0.2 * n_fc + 0.2 * (1 - c.cohesion),
+            4,
+        )
+        scored_classes.append(GodClassMetrics(
+            class_name=c.class_name,
+            file_path=c.file_path,
+            method_count=c.method_count,
+            field_count=c.field_count,
+            total_complexity=c.total_complexity,
+            cohesion=c.cohesion,
+            god_class_score=gcs,
+        ))
+
+    # Phase 4: Rebuild file results with scored classes
+    file_class_map: dict[str, list[GodClassMetrics]] = {}
+    for c in scored_classes:
+        file_class_map.setdefault(c.file_path, []).append(c)
+
+    file_results: list[FileGodClass] = []
+    for f in raw_file_results:
+        classes = file_class_map.get(f.file_path, [])
+        classes.sort(key=lambda c: c.god_class_score, reverse=True)
+        god_count = sum(1 for c in classes if c.god_class_score > gcs_threshold)
+        worst = classes[0].god_class_score if classes else 0.0
+        file_results.append(FileGodClass(
+            file_path=f.file_path,
+            class_count=len(classes),
+            god_class_count=god_count,
+            worst_gcs=worst,
+            classes=classes,
+        ))
+
+    file_results.sort(key=lambda f: f.worst_gcs, reverse=True)
+
+    # Phase 5: Aggregate report
+    total_classes = sum(f.class_count for f in file_results)
+    god_count = sum(f.god_class_count for f in file_results)
+    all_gcs = [c.god_class_score for c in scored_classes]
+    avg_gcs = round(sum(all_gcs) / len(all_gcs), 4) if all_gcs else 0.0
+    pct = round(god_count / total_classes * 100, 1) if total_classes > 0 else 0.0
+
+    return GodClassReport(
+        repo_path=repo_path,
+        ref=ref,
+        total_files=len(file_results),
+        total_classes=total_classes,
+        god_class_count=god_count,
+        god_class_percentage=pct,
+        average_gcs=avg_gcs,
+        gcs_threshold=gcs_threshold,
+        files=file_results,
     )

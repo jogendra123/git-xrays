@@ -89,7 +89,7 @@ if not run_detail:
 
 tab_names = [
     "Overview", "Hotspots", "Knowledge", "Coupling",
-    "Complexity", "Clustering", "Effort", "Anemia", "Time Travel",
+    "Complexity", "Clustering", "Effort", "Anemia", "God Classes", "Time Travel",
 ]
 tabs = st.tabs(tab_names)
 
@@ -336,22 +336,61 @@ with tabs[7]:
     st.header("Anemic Domain Model Detection")
 
     a1, a2, a3 = st.columns(3)
-    a1.metric("Total Classes", run_detail["anemia_total_classes"])
-    a2.metric("Anemic", f"{run_detail['anemia_anemic_count']} ({run_detail['anemia_anemic_pct']:.1f}%)")
-    a3.metric("Avg AMS", f"{run_detail['anemia_average_ams']:.4f}")
+    a1.metric("Total Classes", run_detail["anemic_total_classes"])
+    a2.metric("Anemic", f"{run_detail['anemic_anemic_count']} ({run_detail['anemic_anemic_pct']:.1f}%)")
+    a3.metric("Avg AMS", f"{run_detail['anemic_average_ams']:.4f}")
 
-    anemia = fetch(f"/api/runs/{selected_run_id}/anemia") or []
-    if anemia:
+    anemic = fetch(f"/api/runs/{selected_run_id}/anemic") or []
+    if anemic:
         st.dataframe(
-            [{k: v for k, v in c.items() if k != "run_id"} for c in anemia],
+            [{k: v for k, v in c.items() if k != "run_id"} for c in anemic],
             use_container_width=True,
         )
     else:
-        st.info("No anemia data.")
+        st.info("No anemic data.")
 
-# ── Tab 9: Time Travel ─────────────────────────────────────────────
+# ── Tab 9: God Classes ─────────────────────────────────────────────
 
 with tabs[8]:
+    st.header("God Class Detection")
+
+    g1, g2, g3 = st.columns(3)
+    g1.metric("Total Classes", run_detail.get("god_class_total_classes", 0))
+    g2.metric(
+        "God Classes",
+        f"{run_detail.get('god_class_god_count', 0)} "
+        f"({run_detail.get('god_class_god_pct', 0.0):.1f}%)",
+    )
+    g3.metric("Avg GCS", f"{run_detail.get('god_class_average_gcs', 0.0):.4f}")
+
+    god_classes = fetch(f"/api/runs/{selected_run_id}/god-classes") or []
+    if god_classes:
+        st.dataframe(
+            [{k: v for k, v in c.items() if k != "run_id"} for c in god_classes],
+            use_container_width=True,
+        )
+        top_gc = sorted(god_classes, key=lambda c: c["god_class_score"], reverse=True)[:20]
+        if top_gc:
+            fig = go.Figure(go.Bar(
+                x=[c["god_class_score"] for c in top_gc],
+                y=[f"{c['file_path']}:{c['class_name']}" for c in top_gc],
+                orientation="h",
+                marker_color="#e64980",
+            ))
+            fig.update_layout(
+                title="Top 20 God Classes by GCS",
+                xaxis_title="God Class Score",
+                yaxis=dict(autorange="reversed"),
+                height=max(400, len(top_gc) * 25),
+                margin=dict(l=300),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No god class data.")
+
+# ── Tab 10: Time Travel ────────────────────────────────────────────
+
+with tabs[9]:
     st.header("Time Travel / Run Comparison")
 
     if not compare or not compare_run_id:

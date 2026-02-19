@@ -498,3 +498,170 @@ def coupled_repo(tmp_git_repo: Path) -> Path:
     }, "commit 5: d alone", days_ago=5)
 
     return tmp_git_repo
+
+
+@pytest.fixture
+def java_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with Java files for complexity and anemia testing.
+
+    - UserDTO.java: anemic DTO (fields + getters, no logic)
+    - UserService.java: healthy service (logic methods importing UserDTO)
+    """
+    commit_file(
+        tmp_git_repo, "UserDTO.java",
+        (
+            "public class UserDTO {\n"
+            "    private String name;\n"
+            "    private String email;\n"
+            "    private int age;\n"
+            "    public String getName() { return this.name; }\n"
+            "    public String getEmail() { return this.email; }\n"
+            "    public int getAge() { return this.age; }\n"
+            "    public void setName(String n) { this.name = n; }\n"
+            "}\n"
+        ),
+        "Add anemic Java DTO",
+        days_ago=10,
+    )
+    commit_file(
+        tmp_git_repo, "UserService.java",
+        (
+            "import com.example.UserDTO;\n"
+            "\n"
+            "public class UserService {\n"
+            "    public void validate(Object user) {\n"
+            "        if (user == null) {\n"
+            "            throw new IllegalArgumentException();\n"
+            "        }\n"
+            "    }\n"
+            "    public void processAll(int[] items) {\n"
+            "        for (int item : items) {\n"
+            "            if (item > 0) {\n"
+            "                System.out.println(item);\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        ),
+        "Add healthy Java service",
+        days_ago=5,
+    )
+    return tmp_git_repo
+
+
+@pytest.fixture
+def mixed_lang_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with both Python and Java files.
+
+    - models.py: Python anemic DTO
+    - services.py: Python service
+    - UserDTO.java: Java anemic DTO
+    - UserService.java: Java service
+    """
+    commit_file(
+        tmp_git_repo, "models.py",
+        (
+            "class UserDTO:\n"
+            "    name = ''\n"
+            "    email = ''\n"
+            "    def get_name(self):\n"
+            "        return self.name\n"
+        ),
+        "Add Python DTO",
+        days_ago=15,
+    )
+    commit_file(
+        tmp_git_repo, "services.py",
+        (
+            "class UserService:\n"
+            "    def validate(self, user):\n"
+            "        if not user:\n"
+            "            raise ValueError('invalid')\n"
+        ),
+        "Add Python service",
+        days_ago=12,
+    )
+    commit_file(
+        tmp_git_repo, "UserDTO.java",
+        (
+            "public class UserDTO {\n"
+            "    private String name;\n"
+            "    private int age;\n"
+            "    public String getName() { return this.name; }\n"
+            "    public int getAge() { return this.age; }\n"
+            "}\n"
+        ),
+        "Add Java DTO",
+        days_ago=10,
+    )
+    commit_file(
+        tmp_git_repo, "UserService.java",
+        (
+            "public class UserService {\n"
+            "    public void validate(Object user) {\n"
+            "        if (user == null) {\n"
+            "            throw new IllegalArgumentException();\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        ),
+        "Add Java service",
+        days_ago=5,
+    )
+    return tmp_git_repo
+
+
+@pytest.fixture
+def god_class_repo(tmp_git_repo: Path) -> Path:
+    """Create a repo with a small clean class + a large god class."""
+    commit_file(
+        tmp_git_repo, "small.py",
+        (
+            "class SmallHelper:\n"
+            "    def __init__(self):\n"
+            "        self.x = 1\n"
+            "    def get_x(self):\n"
+            "        return self.x\n"
+        ),
+        "Add small helper",
+        days_ago=10,
+    )
+    commit_file(
+        tmp_git_repo, "god.py",
+        (
+            "class GodClass:\n"
+            "    def __init__(self):\n"
+            "        self.a = 1\n"
+            "        self.b = 2\n"
+            "        self.c = 3\n"
+            "        self.d = 4\n"
+            "        self.e = 5\n"
+            "    def m1(self):\n"
+            "        if self.a > 0:\n"
+            "            for i in range(self.b):\n"
+            "                if i > self.c:\n"
+            "                    pass\n"
+            "    def m2(self):\n"
+            "        while self.d:\n"
+            "            pass\n"
+            "    def m3(self):\n"
+            "        return self.e\n"
+            "    def m4(self):\n"
+            "        if self.a and self.b:\n"
+            "            return True\n"
+            "        return False\n"
+            "    def m5(self):\n"
+            "        try:\n"
+            "            pass\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "    def m6(self):\n"
+            "        for x in range(self.c):\n"
+            "            if x > self.d:\n"
+            "                while self.e:\n"
+            "                    break\n"
+        ),
+        "Add god class",
+        days_ago=5,
+    )
+    return tmp_git_repo

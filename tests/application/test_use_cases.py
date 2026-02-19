@@ -6,12 +6,13 @@ from git_xrays.application.use_cases import (
     _compute_gini,
     _compute_rework_ratio,
     _resolve_ref_to_datetime,
-    analyze_anemia,
+    analyze_anemic,
     analyze_change_clusters,
     analyze_complexity,
     analyze_coupling,
     analyze_dx,
     analyze_effort,
+    analyze_god_classes,
     analyze_hotspots,
     analyze_knowledge,
     compare_hotspots,
@@ -1335,10 +1336,10 @@ class TestFakeSourceCodeReader:
         assert reader.list_python_files() == []
 
 
-class TestAnalyzeAnemia:
+class TestAnalyzeAnemic:
     def test_empty_repo_returns_empty_report(self):
         reader = FakeSourceCodeReader({})
-        report = analyze_anemia(reader, "/repo")
+        report = analyze_anemic(reader, "/repo")
         assert report.total_files == 0
         assert report.total_classes == 0
         assert report.anemic_count == 0
@@ -1354,7 +1355,7 @@ class TestAnalyzeAnemia:
             "        return self.name\n"
         )
         reader = FakeSourceCodeReader({"models.py": source})
-        report = analyze_anemia(reader, "/repo")
+        report = analyze_anemic(reader, "/repo")
         assert report.total_classes == 1
         assert report.anemic_count == 1
 
@@ -1366,7 +1367,7 @@ class TestAnalyzeAnemia:
             "            return 42\n"
         )
         reader = FakeSourceCodeReader({"svc.py": source})
-        report = analyze_anemia(reader, "/repo")
+        report = analyze_anemic(reader, "/repo")
         assert report.total_classes == 1
         assert report.anemic_count == 0
 
@@ -1383,7 +1384,7 @@ class TestAnalyzeAnemia:
             "        if True: pass\n"
         )
         reader = FakeSourceCodeReader({"dto.py": anemic, "svc.py": healthy})
-        report = analyze_anemia(reader, "/repo")
+        report = analyze_anemic(reader, "/repo")
         assert report.total_files == 2
         assert report.total_classes == 2
 
@@ -1407,14 +1408,14 @@ class TestAnalyzeAnemia:
             "high.py": highly_anemic,
             "slight.py": slightly_anemic,
         })
-        report = analyze_anemia(reader, "/repo")
+        report = analyze_anemic(reader, "/repo")
         assert report.files[0].worst_ams >= report.files[1].worst_ams
 
     def test_anemic_percentage_computed(self):
         anemic = "class DTO:\n    x = 1\n    def get(self): return self.x\n"
         healthy = "class Svc:\n    def run(self):\n        if True: pass\n"
         reader = FakeSourceCodeReader({"dto.py": anemic, "svc.py": healthy})
-        report = analyze_anemia(reader, "/repo")
+        report = analyze_anemic(reader, "/repo")
         # 1 anemic out of 2 = 50%
         assert report.anemic_percentage == 50.0
 
@@ -1429,7 +1430,7 @@ class TestAnalyzeAnemia:
             "        if True: pass\n"
         )
         reader = FakeSourceCodeReader({"mixed.py": source})
-        report = analyze_anemia(reader, "/repo")
+        report = analyze_anemic(reader, "/repo")
         # Average of A.ams and B.ams
         all_ams = [c.ams for f in report.files for c in f.classes]
         expected = round(sum(all_ams) / len(all_ams), 4)
@@ -1439,10 +1440,64 @@ class TestAnalyzeAnemia:
         models = "class Foo:\n    x = 1\n"
         app = "import models\nclass Bar:\n    def run(self):\n        if True: pass\n"
         reader = FakeSourceCodeReader({"models.py": models, "app.py": app})
-        report = analyze_anemia(reader, "/repo")
+        report = analyze_anemic(reader, "/repo")
         file_map = {f.file_path: f for f in report.files}
         assert file_map["models.py"].touch_count == 1
         assert file_map["app.py"].touch_count == 0
+
+    def test_java_only_repo(self):
+        java_src = (
+            "public class UserDTO {\n"
+            "    private String name;\n"
+            "    private String email;\n"
+            "    public String getName() { return this.name; }\n"
+            "    public String getEmail() { return this.email; }\n"
+            "}\n"
+        )
+        reader = FakeSourceCodeReader({"UserDTO.java": java_src})
+        report = analyze_anemic(reader, "/repo")
+        assert report.total_files == 1
+        assert report.total_classes == 1
+        assert report.anemic_count == 1
+
+    def test_mixed_python_java_repo(self):
+        py_anemic = (
+            "class PyDTO:\n"
+            "    name = ''\n"
+            "    email = ''\n"
+            "    def get_name(self):\n"
+            "        return self.name\n"
+        )
+        java_svc = (
+            "public class JavaSvc {\n"
+            "    public void validate(Object x) {\n"
+            "        if (x == null) {\n"
+            "            throw new IllegalArgumentException();\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+        reader = FakeSourceCodeReader({
+            "dto.py": py_anemic,
+            "JavaSvc.java": java_svc,
+        })
+        report = analyze_anemic(reader, "/repo")
+        assert report.total_files == 2
+        assert report.total_classes == 2
+        # Python DTO is anemic, Java service is not
+        assert report.anemic_count == 1
+
+    def test_java_touch_counts_integrated(self):
+        model = "public class Model { private int id; }\n"
+        svc = "import com.example.Model;\npublic class Service { }\n"
+        reader = FakeSourceCodeReader({
+            "Model.java": model,
+            "Service.java": svc,
+        })
+        report = analyze_anemic(reader, "/repo")
+        file_map = {f.file_path: f for f in report.files}
+        assert file_map["Model.java"].touch_count == 1
+        assert file_map["Service.java"].touch_count == 0
 
 
 class TestAnalyzeComplexity:
@@ -1512,6 +1567,8 @@ class TestAnalyzeComplexity:
         class BrokenReader:
             def list_python_files(self, ref=None):
                 return ["exists.py", "missing.py"]
+            def list_java_files(self, ref=None):
+                return []
             def read_file(self, file_path, ref=None):
                 if file_path == "missing.py":
                     raise FileNotFoundError("not found")
@@ -1520,6 +1577,48 @@ class TestAnalyzeComplexity:
         report = analyze_complexity(BrokenReader(), "/repo")
         assert report.total_files == 1
         assert report.total_functions == 1
+
+    def test_java_only_repo(self):
+        java_src = (
+            "public class Svc {\n"
+            "    public void process(int x) {\n"
+            "        if (x > 0) {\n"
+            "            System.out.println(x);\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+        reader = FakeSourceCodeReader({"Svc.java": java_src})
+        report = analyze_complexity(reader, "/repo")
+        assert report.total_files == 1
+        assert report.total_functions == 1
+        assert report.max_complexity == 2
+
+    def test_mixed_python_java_repo(self):
+        py_src = "def process(x):\n    if x > 0:\n        return x\n    return 0\n"
+        java_src = (
+            "public class Svc {\n"
+            "    public void run(int[] data) {\n"
+            "        for (int x : data) {\n"
+            "            if (x > 0) {\n"
+            "                System.out.println(x);\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+        reader = FakeSourceCodeReader({"svc.py": py_src, "Svc.java": java_src})
+        report = analyze_complexity(reader, "/repo")
+        assert report.total_files == 2
+        assert report.total_functions == 2
+        # Java method has CC=3 (1+for+if), Python has CC=2 (1+if)
+        assert report.files[0].file_path == "Svc.java"
+
+    def test_empty_java_and_python(self):
+        reader = FakeSourceCodeReader({})
+        report = analyze_complexity(reader, "/repo")
+        assert report.total_files == 0
+        assert report.total_functions == 0
 
 
 class TestAnalyzeChangeClusters:
@@ -1918,3 +2017,201 @@ class TestAnalyzeDX:
         source_reader = FakeSourceCodeReader({})
         report = analyze_dx(repo, source_reader, "/repo", 30, current_time=NOW)
         assert report.total_commits == 1
+
+
+# ── God Class Analysis ─────────────────────────────────────────────
+
+
+class TestAnalyzeGodClasses:
+    def test_empty_repo(self):
+        reader = FakeSourceCodeReader({})
+        report = analyze_god_classes(reader, "/repo")
+        assert report.total_classes == 0
+        assert report.god_class_count == 0
+        assert report.files == []
+
+    def test_python_only(self):
+        reader = FakeSourceCodeReader({
+            "small.py": """
+class Tiny:
+    def a(self):
+        return self.x
+""",
+            "big.py": """
+class Big:
+    def __init__(self):
+        self.a = 1
+        self.b = 2
+        self.c = 3
+        self.d = 4
+        self.e = 5
+    def m1(self):
+        if self.a > 0:
+            for i in range(self.b):
+                pass
+    def m2(self):
+        while self.c:
+            pass
+    def m3(self):
+        return self.d
+    def m4(self):
+        if self.e:
+            return True
+        return False
+    def m5(self):
+        try:
+            pass
+        except Exception:
+            pass
+""",
+        })
+        report = analyze_god_classes(reader, "/repo")
+        assert report.total_classes == 2
+        assert report.total_files == 2
+        # Big has more methods/fields → higher GCS than Tiny
+        big_classes = [c for f in report.files for c in f.classes if c.class_name == "Big"]
+        tiny_classes = [c for f in report.files for c in f.classes if c.class_name == "Tiny"]
+        assert big_classes[0].god_class_score > tiny_classes[0].god_class_score
+
+    def test_java_only(self):
+        reader = FakeSourceCodeReader({
+            "Small.java": """
+public class Small {
+    public void foo() { return; }
+}
+""",
+            "Big.java": """
+public class Big {
+    private int a;
+    private int b;
+    private int c;
+    public void m1() { if (this.a > 0) { return; } }
+    public void m2() { while (this.b > 0) { this.b--; } }
+    public void m3() { return; }
+}
+""",
+        })
+        report = analyze_god_classes(reader, "/repo")
+        assert report.total_classes == 2
+        big_classes = [c for f in report.files for c in f.classes if c.class_name == "Big"]
+        small_classes = [c for f in report.files for c in f.classes if c.class_name == "Small"]
+        assert big_classes[0].god_class_score > small_classes[0].god_class_score
+
+    def test_mixed_python_java(self):
+        reader = FakeSourceCodeReader({
+            "app.py": """
+class PyClass:
+    def __init__(self):
+        self.x = 1
+    def process(self):
+        if self.x:
+            return self.x
+        return 0
+""",
+            "App.java": """
+public class JavaClass {
+    private int x;
+    public void process() {
+        if (this.x > 0) { return; }
+    }
+}
+""",
+        })
+        report = analyze_god_classes(reader, "/repo")
+        assert report.total_classes == 2
+        assert report.total_files == 2
+        class_names = {c.class_name for f in report.files for c in f.classes}
+        assert class_names == {"PyClass", "JavaClass"}
+
+    def test_gcs_in_range(self):
+        """All GCS values should be in [0, 1]."""
+        reader = FakeSourceCodeReader({
+            "a.py": """
+class A:
+    def foo(self):
+        return self.x
+""",
+            "b.py": """
+class B:
+    def __init__(self):
+        self.x = 1
+        self.y = 2
+    def bar(self):
+        if self.x:
+            for i in range(self.y):
+                pass
+    def baz(self):
+        return self.x
+""",
+        })
+        report = analyze_god_classes(reader, "/repo")
+        for f in report.files:
+            for c in f.classes:
+                assert 0.0 <= c.god_class_score <= 1.0, f"{c.class_name}: {c.god_class_score}"
+
+    def test_threshold_filtering(self):
+        reader = FakeSourceCodeReader({
+            "a.py": "class A:\n    pass\n",
+        })
+        report = analyze_god_classes(reader, "/repo", gcs_threshold=0.0)
+        # Single class, all sub-metrics normalized to 0 → GCS = 0.2 * (1-1.0) = 0
+        # Won't exceed threshold of 0.0 since score == 0.0 (not >)
+        assert report.god_class_count == 0
+
+    def test_god_class_percentage(self):
+        reader = FakeSourceCodeReader({
+            "a.py": """
+class Small:
+    def x(self):
+        return 1
+""",
+            "b.py": """
+class Big:
+    def __init__(self):
+        self.a = 1
+        self.b = 2
+        self.c = 3
+        self.d = 4
+        self.e = 5
+        self.f = 6
+        self.g = 7
+        self.h = 8
+    def m1(self):
+        if self.a > 0:
+            for i in range(self.b):
+                if i > self.c:
+                    while self.d:
+                        pass
+    def m2(self):
+        try:
+            if self.e and self.f:
+                pass
+        except Exception:
+            pass
+    def m3(self):
+        return self.g
+    def m4(self):
+        for x in range(self.h):
+            if x:
+                pass
+    def m5(self):
+        if self.a or self.b:
+            return True
+        return False
+    def m6(self):
+        while self.c and self.d:
+            if self.e:
+                break
+""",
+        })
+        report = analyze_god_classes(reader, "/repo", gcs_threshold=0.5)
+        # Big should be flagged, Small should not
+        assert report.god_class_count >= 1
+        assert report.god_class_percentage > 0.0
+
+    def test_ref_parameter_passed(self):
+        reader = FakeSourceCodeReader({
+            "a.py": "class A:\n    pass\n",
+        })
+        report = analyze_god_classes(reader, "/repo", ref="v1.0")
+        assert report.ref == "v1.0"
