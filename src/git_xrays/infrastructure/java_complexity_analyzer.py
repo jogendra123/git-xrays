@@ -23,15 +23,14 @@ _DECISION_TYPES = frozenset({
 
 
 def _compute_cyclomatic(node: Node) -> int:
-    """Compute cyclomatic complexity: 1 + decision points."""
+    """Compute cyclomatic complexity: 1 + decision points (iterative)."""
     complexity = 1
-
-    def _walk(n: Node) -> None:
-        nonlocal complexity
+    stack = list(node.children)
+    while stack:
+        n = stack.pop()
         if n.type in _DECISION_TYPES:
             complexity += 1
         elif n.type == "switch_expression":
-            # Count case labels (each non-default case is a decision)
             for child in n.named_children:
                 if child.type == "switch_block_statement_group":
                     for label in child.named_children:
@@ -45,158 +44,124 @@ def _compute_cyclomatic(node: Node) -> int:
             op = n.child_by_field_name("operator")
             if op and op.type in ("&&", "||"):
                 complexity += 1
-        for child in n.children:
-            _walk(child)
-
-    for child in node.children:
-        _walk(child)
+        stack.extend(n.children)
     return complexity
 
 
 def _compute_max_nesting(node: Node) -> int:
-    """Compute maximum nesting depth of control flow structures."""
-
-    def _walk(n: Node, depth: int) -> int:
-        max_depth = depth
+    """Compute maximum nesting depth of control flow structures (iterative)."""
+    max_depth = 0
+    stack: list[tuple[Node, int]] = [(node, 0)]
+    while stack:
+        n, depth = stack.pop()
+        if depth > max_depth:
+            max_depth = depth
         for child in n.named_children:
             if child.type in _NESTING_TYPES:
-                child_depth = _walk(child, depth + 1)
-                if child_depth > max_depth:
-                    max_depth = child_depth
+                stack.append((child, depth + 1))
             else:
-                child_depth = _walk(child, depth)
-                if child_depth > max_depth:
-                    max_depth = child_depth
-        return max_depth
-
-    return _walk(node, 0)
+                stack.append((child, depth))
+    return max_depth
 
 
 def _count_branches(node: Node) -> int:
-    """Count if_statement nodes."""
+    """Count if_statement nodes (iterative)."""
     count = 0
-
-    def _walk(n: Node) -> None:
-        nonlocal count
+    stack = list(node.children)
+    while stack:
+        n = stack.pop()
         if n.type == "if_statement":
             count += 1
-        for child in n.children:
-            _walk(child)
-
-    for child in node.children:
-        _walk(child)
+        stack.extend(n.children)
     return count
 
 
 def _count_exception_paths(node: Node) -> int:
-    """Count catch_clause nodes."""
+    """Count catch_clause nodes (iterative)."""
     count = 0
-
-    def _walk(n: Node) -> None:
-        nonlocal count
+    stack = list(node.children)
+    while stack:
+        n = stack.pop()
         if n.type == "catch_clause":
             count += 1
-        for child in n.children:
-            _walk(child)
-
-    for child in node.children:
-        _walk(child)
+        stack.extend(n.children)
     return count
 
 
 def _compute_cognitive_complexity(node: Node) -> int:
-    """Compute cognitive complexity per the SonarSource algorithm adapted for Java."""
+    """Compute cognitive complexity per the SonarSource algorithm adapted for Java (iterative)."""
     total = 0
 
-    def _walk(n: Node, depth: int) -> None:
-        nonlocal total
+    def _count_bool_ops_in_condition(stmt: Node) -> int:
+        """Count boolean operator sequences in condition."""
+        cond = stmt.child_by_field_name("condition")
+        if cond:
+            return _count_bool_sequences(cond)
+        return 0
+
+    # Stack items: (node, depth) — process named_children of each node
+    stack: list[tuple[Node, int]] = [(node, 0)]
+    while stack:
+        n, depth = stack.pop()
+        # Process children in reverse order so left-to-right evaluation order is preserved
+        children_to_push: list[tuple[Node, int]] = []
         for child in n.named_children:
             if child.type == "if_statement":
                 total += 1 + depth
-                _count_bool_ops_in_condition(child)
-                # Walk the consequence (body)
+                total += _count_bool_ops_in_condition(child)
                 body = child.child_by_field_name("consequence")
                 if body:
-                    _walk(body, depth + 1)
-                # Handle else/else-if
+                    children_to_push.append((body, depth + 1))
+                # Handle else/else-if chain iteratively
                 alt = child.child_by_field_name("alternative")
-                if alt:
+                while alt:
                     if alt.type == "if_statement":
-                        # else if: adds 1 (no nesting increment)
-                        total += 1
-                        _count_bool_ops_in_condition(alt)
+                        total += 1  # else if
+                        total += _count_bool_ops_in_condition(alt)
                         alt_body = alt.child_by_field_name("consequence")
                         if alt_body:
-                            _walk(alt_body, depth + 1)
-                        alt_alt = alt.child_by_field_name("alternative")
-                        if alt_alt:
-                            _handle_else_chain(alt_alt, depth)
+                            children_to_push.append((alt_body, depth + 1))
+                        alt = alt.child_by_field_name("alternative")
                     else:
-                        # else block
-                        total += 1
-                        _walk(alt, depth + 1)
+                        total += 1  # else block
+                        children_to_push.append((alt, depth + 1))
+                        alt = None
             elif child.type in ("for_statement", "while_statement",
                                 "do_statement", "enhanced_for_statement"):
                 total += 1 + depth
                 if child.type == "while_statement":
-                    _count_bool_ops_in_condition(child)
-                _walk(child, depth + 1)
+                    total += _count_bool_ops_in_condition(child)
+                children_to_push.append((child, depth + 1))
             elif child.type == "try_statement":
-                # try body at same depth
                 for tc in child.named_children:
                     if tc.type == "block":
-                        _walk(tc, depth)
+                        children_to_push.append((tc, depth))
                     elif tc.type == "catch_clause":
                         total += 1 + depth
-                        _walk(tc, depth + 1)
+                        children_to_push.append((tc, depth + 1))
                     elif tc.type == "finally_clause":
-                        _walk(tc, depth)
+                        children_to_push.append((tc, depth))
             elif child.type == "switch_expression":
                 total += 1 + depth
-                _walk(child, depth + 1)
+                children_to_push.append((child, depth + 1))
             else:
-                _walk(child, depth)
-
-    def _handle_else_chain(alt: Node, depth: int) -> None:
-        nonlocal total
-        if alt.type == "if_statement":
-            total += 1  # else if
-            _count_bool_ops_in_condition(alt)
-            body = alt.child_by_field_name("consequence")
-            if body:
-                _walk(body, depth + 1)
-            next_alt = alt.child_by_field_name("alternative")
-            if next_alt:
-                _handle_else_chain(next_alt, depth)
-        else:
-            total += 1  # else
-            _walk(alt, depth + 1)
-
-    def _count_bool_ops_in_condition(stmt: Node) -> None:
-        """Count boolean operator sequences in condition."""
-        nonlocal total
-        cond = stmt.child_by_field_name("condition")
-        if cond:
-            total += _count_bool_sequences(cond)
-
-    _walk(node, 0)
+                children_to_push.append((child, depth))
+        # Push in reverse so first child is processed first
+        stack.extend(reversed(children_to_push))
     return total
 
 
 def _count_bool_sequences(node: Node) -> int:
-    """Count boolean operator sequences. Each chain of && or || adds 1."""
+    """Count boolean operator sequences (iterative). Each chain of && or || adds 1."""
     count = 0
-
-    def _walk(n: Node) -> None:
-        nonlocal count
+    stack = [node]
+    while stack:
+        n = stack.pop()
         if n.type == "binary_expression":
             op = n.child_by_field_name("operator")
             if op and op.type in ("&&", "||"):
                 count += 1
-        for child in n.children:
-            _walk(child)
-
-    _walk(node)
+        stack.extend(n.children)
     return count
 
 

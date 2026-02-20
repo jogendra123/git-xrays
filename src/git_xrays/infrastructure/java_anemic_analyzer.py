@@ -46,15 +46,14 @@ def _count_fields(class_node: Node) -> int:
 
 
 def _has_logic(method_body: Node) -> bool:
-    """Check if a method body contains logic statements."""
-    def _walk(n: Node) -> bool:
+    """Check if a method body contains logic statements (iterative)."""
+    stack = [method_body]
+    while stack:
+        n = stack.pop()
         if n.type in _LOGIC_TYPES:
             return True
-        for child in n.children:
-            if _walk(child):
-                return True
-        return False
-    return _walk(method_body)
+        stack.extend(n.children)
+    return False
 
 
 def _is_getter_or_setter(method_node: Node) -> bool:

@@ -2,7 +2,7 @@
 ## Behavioral & Architectural Code Intelligence Platform
 
 ### Version
-v2.0 (Post-Implementation — reflects actual system as built)
+v3.0 (Post-Implementation — reflects actual system as built, including Java support and god class detection)
 
 ---
 
@@ -47,16 +47,16 @@ Inspired by:
 
 ```
 src/git_xrays/
-├── domain/          # Models (28 frozen dataclasses), Ports (2 Protocols)
-├── application/     # Use cases (8 analyses + comparison orchestration)
-├── infrastructure/  # Git CLI, AST parsers, engines, DuckDB storage
+├── domain/          # Models (31 frozen dataclasses), Ports (2 Protocols)
+├── application/     # Use cases (9 analyses + comparison orchestration)
+├── infrastructure/  # Git CLI, AST/tree-sitter parsers, engines, DuckDB storage
 ├── interface/       # CLI (argparse, 17 flags)
 └── web/             # FastAPI REST API + Streamlit dashboard (optional)
 ```
 
 **Domain layer** has zero external dependencies. All models are frozen dataclasses. Two Protocol interfaces (`GitRepository`, `SourceCodeReader`) define the ports.
 
-**Infrastructure layer** contains all I/O and computation engines. Analysis engines (K-Means, ridge regression, AST parsing) are pure Python with zero external dependencies beyond the standard library.
+**Infrastructure layer** contains all I/O and computation engines. Python analysis engines (K-Means, ridge regression, AST parsing) are pure Python with zero external dependencies beyond the standard library. Java analysis uses tree-sitter for parsing.
 
 **Interface layer** is a thin CLI using argparse. Web layer is optional.
 
@@ -69,9 +69,11 @@ class GitRepository(Protocol):
     def last_commit_date(self) -> datetime | None: ...
     def file_changes(self, since=None, until=None) -> list[FileChange]: ...
     def resolve_ref(self, ref: str) -> datetime: ...
+    def file_sizes(self, ref=None) -> dict[str, int]: ...
 
 class SourceCodeReader(Protocol):
     def list_python_files(self, ref=None) -> list[str]: ...
+    def list_java_files(self, ref=None) -> list[str]: ...
     def read_file(self, file_path: str, ref=None) -> str: ...
 ```
 
@@ -85,16 +87,17 @@ Implementations: `GitCliReader` (git subprocess), `GitSourceReader` (git ls-tree
 |-----------|-----------|-------|
 | Language | Python 3.13+ | Type hints throughout |
 | Package manager | uv | Lock file, extras support |
-| Storage | DuckDB >= 1.0 | 11 tables, single-file DB |
+| Storage | DuckDB >= 1.0 | 12 tables, single-file DB |
 | Git access | Git CLI (subprocess) | No libgit2 |
-| AST parsing | Python `ast` module | stdlib only |
-| ML | Pure Python ridge regression | Gauss-Jordan solver, no numpy/scipy |
-| Clustering | Pure Python K-Means | Lloyd's algorithm, no sklearn |
-| Web API | FastAPI >= 0.110 | Optional, 14 endpoints |
-| Web UI | Streamlit >= 1.35 | Optional, 9 tabs |
+| Python AST | Python `ast` module | stdlib only |
+| Java AST | tree-sitter >= 0.23 + tree-sitter-java >= 0.23 | Complexity, anemic, god class |
+| ML | Pure Python ridge regression | Gauss-Jordan solver, auto-tuned alpha |
+| Clustering | Pure Python K-Means++ | Lloyd's + K-Means++ init, no sklearn |
+| Web API | FastAPI >= 0.110 | Optional, 15 endpoints |
+| Web UI | Streamlit >= 1.35 | Optional, 10 tabs |
 | Charts | Plotly >= 5.20 | Optional, interactive |
 | HTTP client | httpx >= 0.27 | Dashboard to API |
-| Testing | pytest >= 8.0 | 582 tests, TDD workflow |
+| Testing | pytest >= 8.0 | 752 tests, TDD workflow |
 
 ---
 
@@ -128,10 +131,10 @@ Commits per file within the time window.
 Lines added + lines deleted per file.
 
 ### 8.3 Hotspot Score
-`normalized(churn) * normalized(frequency)` — identifies files that change often and change a lot.
+`normalized(weighted_churn) * normalized(weighted_frequency)` — identifies files that change often and change a lot. Uses temporal decay weighting (half-life = 30 days) so recent changes matter more. Churn is relative (churn / file_size).
 
 ### 8.4 Rework Ratio
-`(frequency - 1) / frequency` — approaches 1.0 for frequently modified files.
+Temporal window-based (14 days): fraction of changes to lines modified within the last 14 days.
 
 ### 8.5 Effort Distribution
 Pareto analysis: reports how many files account for 50%/80%/90% of total churn.
@@ -143,7 +146,7 @@ Pareto analysis: reports how many files account for 50%/80%/90% of total churn.
 ## 9. Knowledge & Developer Risk (Phase 2)
 
 ### 9.1 Knowledge Distribution Index (KDI)
-`KDI = 1 - normalized_shannon_entropy` over author churn proportions. 1.0 = single author, 0.0 = perfectly distributed.
+`KDI = 1 - normalized_shannon_entropy` over recency-weighted author churn proportions. 1.0 = single author, 0.0 = perfectly distributed.
 
 ### 9.2 Knowledge Islands
 Files where `primary_author_pct > 0.8`. Flagged as bus-factor risks.
@@ -152,7 +155,7 @@ Files where `primary_author_pct > 0.8`. Flagged as bus-factor risks.
 Time-weighted contributions: `weight = 2^(-age_days / half_life)`, half_life = 90 days. Recent contributions count more.
 
 ### 9.4 Developer Risk Index (DRI)
-Minimum number of authors needed to cover > 50% of total weighted churn. Team-level metric only.
+Gini coefficient of author churn distribution. Float in [0, 1] where 0 = perfectly equal distribution, 1 = single-author concentration. Team-level metric only.
 
 **Domain model**: `AuthorContribution`, `FileKnowledge`, `KnowledgeReport`
 
@@ -161,7 +164,7 @@ Minimum number of authors needed to cover > 50% of total weighted churn. Team-le
 ## 10. Temporal Coupling & PAIN (Phase 3)
 
 ### 10.1 Coupling Detection
-Jaccard similarity on co-commits: `shared_commits / union_commits`. Minimum 2 shared commits to qualify. Reports coupling strength and support (shared / total commits).
+Temporal-proximity Jaccard similarity on co-commits: `weighted_shared / weighted_union` (half-life = 30 days). Minimum 2 shared commits + lift > 1.0 filter. Lift = shared / expected; expected = (commits_A / total) * (commits_B / total) * total. Reports coupling strength, expected cochange, and lift.
 
 ### 10.2 PAIN Metric (Vlad Khononov)
 Per-file: `PAIN = normalized(Size) * normalized(Distance) * normalized(Volatility)`
@@ -175,17 +178,17 @@ Per-file: `PAIN = normalized(Size) * normalized(Distance) * normalized(Volatilit
 
 ## 11. Anemic Domain Model Detection (Phase 6)
 
-AST-based Python class analysis:
+AST-based class analysis for Python and Java:
 
-- **Fields**: class-level attributes + `self.x` assignments in `__init__` only
-- **Behavior methods**: non-dunder, non-property methods containing `if`/`for`/`while`/`try`/`with`
+- **Fields**: class-level attributes + `self.x` assignments in `__init__` (Python); instance fields + record parameters (Java)
+- **Behavior methods**: non-dunder, non-property methods containing `if`/`for`/`while`/`try`/`with` (Python); non-getter/setter methods with control flow (Java)
 - **DBSI** = `field_count / (field_count + behavior_method_count)`
 - **Logic density** = methods with logic / non-dunder non-property methods
 - **Orchestration pressure** = `1 - logic_density`
 - **AMS** = `DBSI * orchestration_pressure` (threshold: 0.5)
-- **Touch count**: heuristic import resolution across `.py` files
+- **Touch count**: heuristic import resolution across `.py` and `.java` files
 
-Uses `SourceCodeReader` protocol. Supports `--at` for point-in-time snapshots.
+Python uses stdlib `ast` module. Java uses tree-sitter. Supports `--at` for point-in-time snapshots.
 
 **Domain model**: `ClassMetrics`, `FileAnemic`, `AnemicReport`
 
@@ -193,12 +196,13 @@ Uses `SourceCodeReader` protocol. Supports `--at` for point-in-time snapshots.
 
 ## 12. AST Complexity Metrics (Phase 7)
 
-Per-function metrics via Python `ast` module:
+Per-function metrics for Python (stdlib `ast`) and Java (tree-sitter):
 
-- **Cyclomatic complexity**: `1 + if/elif/for/while/except/assert/IfExp + BoolOp(len(values)-1)`
+- **Cyclomatic complexity**: `1 + if/elif/for/while/except/assert/IfExp + BoolOp(len(values)-1)` (Python); `1 + if/else-if/for/enhanced-for/while/do/case/catch/ternary/&&/||` (Java)
+- **Cognitive complexity**: SonarSource algorithm — increments for breaks in linear flow, with nesting penalties
 - **Max nesting depth**: recursive visitor for `if`/`for`/`while`/`with`/`try` (elif counts as nested)
-- **Branch count**: `ast.If` node count
-- **Exception paths**: `ast.ExceptHandler` count
+- **Branch count**: `ast.If` / `if_statement` node count
+- **Exception paths**: `ast.ExceptHandler` / `catch_clause` count
 - **Length**: `end_lineno - lineno + 1`
 
 Analyzes top-level functions and direct class methods (skips nested defs). High complexity threshold: 10.
@@ -207,12 +211,30 @@ Analyzes top-level functions and direct class methods (skips nested defs). High 
 
 ---
 
+## 12b. God Class Detection
+
+Detects classes that do too much — based on Lanza & Marinescu "Object-Oriented Metrics in Practice". Supports Python (stdlib `ast`) and Java (tree-sitter).
+
+- **WMC** (Weighted Methods per Class): sum of cyclomatic complexity of all methods (including dunders/constructors)
+- **TCC** (Tight Class Cohesion): fraction of candidate method pairs that share at least one field access (`self.x` / `this.field`). 1.0 if <= 1 method.
+- **Method count**: non-dunder, non-property methods (Python); non-getter/setter methods (Java)
+- **Field count**: class-level attrs + `self.x` in `__init__` (Python); instance fields + record parameters (Java)
+- **God Class Score (GCS)**: `0.3*norm(methods) + 0.3*norm(WMC) + 0.2*norm(fields) + 0.2*(1 - TCC)`
+  - All sub-metrics min-max normalized across all classes in the repo
+  - GCS in [0, 1]; threshold default: 0.6
+- Snapshot analysis (not temporal), supports `--at` for time travel
+
+**Domain model**: `GodClassMetrics`, `FileGodClass`, `GodClassReport`
+
+---
+
 ## 13. Change Clustering (Phase 8)
 
-Pure Python K-Means (Lloyd's algorithm), zero dependencies:
+Pure Python K-Means++ (Lloyd's algorithm with K-Means++ initialization), zero dependencies:
 
 - **Feature vector per commit**: `[file_count, total_churn, add_ratio]`
 - **Normalization**: min-max per feature
+- **Initialization**: K-Means++ (probability-proportional-to-distance seed selection)
 - **Auto-k selection**: tries k=2..8, picks highest silhouette score
 - **Cluster labeling**: based on normalized centroids — `feature`, `bugfix`, `refactoring`, `config`, or `mixed`
 - **Drift detection**: first-half vs second-half percentage comparison, `abs(drift) < 5` = stable
@@ -225,8 +247,10 @@ Pure Python K-Means (Lloyd's algorithm), zero dependencies:
 
 Ridge regression via Gauss-Jordan elimination, zero dependencies:
 
-### Features (5)
-`[code_churn, change_frequency, pain_score, knowledge_concentration, author_count]`
+### Features (6)
+`[code_churn, change_frequency, pain_score, knowledge_concentration, author_count, knowledge_x_pain]`
+
+Alpha regularization is auto-tuned via grid search.
 
 ### Effort Proxy Label
 `0.5 * normalized(commit_density) + 0.5 * normalized(rework_ratio)`
@@ -237,7 +261,7 @@ Commit density = `1 / (1 + median_interval_days)`.
 - **Relative Effort Index (REI)** in [0, 1] per file (dot product + min-max normalization)
 - **Feature attribution**: per-file breakdown of each feature's contribution
 - **Model R-squared**: goodness of fit
-- **Fallback**: < 3 files = equal weights (0.2 each), R² = 0.0
+- **Fallback**: < 3 files = equal weights (1/6 each), R² = 0.0
 
 **Domain model**: `FeatureAttribution`, `FileEffort`, `EffortReport`
 
@@ -252,7 +276,7 @@ Composite developer experience score from 4 git-derived metrics:
 | Throughput | Weighted commit rate: feature=1.0, refactoring=0.8, bugfix/mixed=0.5, config=0.3 |
 | Feedback Delay | `mean(densities) * (1 - mean(rework_ratios))` |
 | Focus Ratio | `feature_commits / (feature + bugfix + config + refactoring)`, mixed excluded, empty = 0.5 |
-| Cognitive Load | Per-file mean of (complexity, coordination, knowledge, change_rate) scores |
+| Cognitive Load | Per-file weighted average: 0.35*complexity + 0.25*coordination + 0.25*knowledge + 0.15*change_rate |
 
 **DX Score** = `0.3*throughput + 0.25*feedback + 0.25*focus + 0.2*(1-cognitive_load)`
 
@@ -266,25 +290,26 @@ Internally runs hotspot + knowledge + coupling + clustering + complexity analyse
 
 `--all` persists every run to DuckDB (default `~/.git-xrays/runs.db`).
 
-### Schema: 11 tables
+### Schema: 12 tables
 | Table | Primary Key | Records |
 |-------|-------------|---------|
-| `runs` | `run_id` | 1 per run (32 scalar columns) |
+| `runs` | `run_id` | 1 per run (36 scalar columns) |
 | `hotspot_files` | `(run_id, file_path)` | Per-file hotspot metrics |
 | `knowledge_files` | `(run_id, file_path)` | Per-file knowledge metrics |
 | `coupling_pairs` | `(run_id, file_a, file_b)` | Coupling pair data |
 | `file_pain` | `(run_id, file_path)` | PAIN scores |
-| `anemia_classes` | `(run_id, file_path, class_name)` | Class-level anemia |
+| `anemic_classes` | `(run_id, file_path, class_name)` | Class-level anemic metrics |
 | `complexity_functions` | `(run_id, file_path, function_name, line_number)` | Function complexity |
 | `cluster_summaries` | `(run_id, cluster_id)` | Cluster centroids + labels |
 | `cluster_drift` | none (labels can duplicate) | Drift per cluster label |
 | `effort_files` | `(run_id, file_path)` | REI scores |
 | `dx_cognitive_files` | `(run_id, file_path)` | Cognitive load breakdown |
+| `god_class_classes` | `(run_id, file_path, class_name)` | God class metrics |
 
 JSON-encoded fields in `runs`: `effort_coefficients`, `dx_weights`.
 
-### Read Methods (13)
-`get_run`, `list_repos`, `list_runs_for_repo`, `get_hotspot_files`, `get_knowledge_files`, `get_coupling_pairs`, `get_file_pain`, `get_anemia_classes`, `get_complexity_functions`, `get_cluster_summaries`, `get_cluster_drift`, `get_effort_files`, `get_dx_cognitive_files` — all use a generic `_query_child` helper.
+### Read Methods (15)
+`get_run`, `list_repos`, `list_runs_for_repo`, `get_hotspot_files`, `get_knowledge_files`, `get_coupling_pairs`, `get_file_pain`, `get_anemic_classes`, `get_complexity_functions`, `get_cluster_summaries`, `get_cluster_drift`, `get_effort_files`, `get_dx_cognitive_files`, `get_god_classes`, `list_runs` — all child getters use a generic `_query_child` helper.
 
 ---
 
@@ -298,15 +323,15 @@ Optional dependency group `[web]`: FastAPI, uvicorn, Streamlit, httpx, Plotly.
 analyze-repo --serve [--db PATH] [--port 8000]
         │
         ├── FastAPI (uvicorn, port 8000)  ← reads DuckDB via RunStore
-        │     └── 14 REST endpoints under /api/
+        │     └── 15 REST endpoints under /api/
         │
         └── Streamlit (port 8001)  ← calls FastAPI via httpx
-              └── Sidebar + 9 tabs + Plotly charts
+              └── Sidebar + 10 tabs + Plotly charts
 ```
 
 Server orchestration: uvicorn runs in a daemon thread, Streamlit launches as a subprocess. Lazy import with clear error if web deps are missing.
 
-### REST API (14 endpoints)
+### REST API (15 endpoints)
 
 | Method | Route | Response |
 |--------|-------|----------|
@@ -317,17 +342,18 @@ Server orchestration: uvicorn runs in a daemon thread, Streamlit launches as a s
 | GET | `/api/runs/{run_id}/knowledge` | `list[KnowledgeFile]` |
 | GET | `/api/runs/{run_id}/coupling` | `list[CouplingPairRow]` |
 | GET | `/api/runs/{run_id}/pain` | `list[FilePainRow]` |
-| GET | `/api/runs/{run_id}/anemia` | `list[AnemiaClassRow]` |
+| GET | `/api/runs/{run_id}/anemic` | `list[AnemicClassRow]` |
 | GET | `/api/runs/{run_id}/complexity` | `list[ComplexityFnRow]` |
 | GET | `/api/runs/{run_id}/clusters` | `list[ClusterRow]` |
 | GET | `/api/runs/{run_id}/drift` | `list[DriftRow]` |
 | GET | `/api/runs/{run_id}/effort` | `list[EffortFileRow]` |
 | GET | `/api/runs/{run_id}/cognitive` | `list[CognitiveRow]` |
+| GET | `/api/runs/{run_id}/god-classes` | `list[GodClassRow]` |
 | GET | `/api/compare?a={id}&b={id}` | `RunComparison` |
 
 14 Pydantic response models in `web/models.py`. FastAPI lifespan context manager initializes/closes RunStore. 404 for missing run IDs.
 
-### Dashboard (9 tabs)
+### Dashboard (10 tabs)
 
 1. **Overview** — DX Score gauge (Plotly), 4 core metric cards, summary stats row
 2. **Hotspots** — Data table + horizontal bar chart (top 20 by hotspot score)
@@ -337,7 +363,8 @@ Server orchestration: uvicorn runs in a daemon thread, Streamlit launches as a s
 6. **Clustering** — Pie chart of cluster sizes, summary table, drift table with trend arrows
 7. **Effort** — R² display, REI file table, top 20 REI bar chart
 8. **Anemia** — Summary stats, class-level table with AMS values
-9. **Time Travel** — Two-column layout, DX score comparison with delta, per-metric delta cards, side-by-side hotspot tables
+9. **God Classes** — Summary stats, class-level table with GCS values, top 20 GCS bar chart
+10. **Time Travel** — Two-column layout, DX score comparison with delta, per-metric delta cards, side-by-side hotspot tables
 
 Data layer: `httpx.get()` calls cached with `@st.cache_data(ttl=60)`.
 
@@ -353,15 +380,16 @@ analyze-repo [repo_path] [OPTIONS]
   --window DAYS          Analysis window (e.g. 90d, default: 90d)
   --knowledge            Knowledge distribution analysis
   --coupling             Temporal coupling and PAIN analysis
-  --anemia               Anemic domain model analysis
-  --complexity           Function-level complexity analysis
+  --anemic               Anemic domain model analysis (Python + Java)
+  --god-class            God class detection (Python + Java)
+  --complexity           Function-level complexity analysis (Python + Java)
   --clustering           Change clustering analysis
   --effort               Effort modeling (REI scores)
   --dx                   DX Core 4 analysis
   --at REF               Anchor at commit/tag/branch/date
   --from REF             Start ref for comparison (requires --to)
   --to REF               End ref for comparison (requires --from)
-  --all                  Run all 8 analyses + store in DuckDB
+  --all                  Run all 9 analyses + store in DuckDB
   --db PATH              Custom DuckDB path (default: ~/.git-xrays/runs.db)
   --list-runs            Show past runs from DuckDB
   --serve                Launch web dashboard
@@ -388,12 +416,16 @@ Mutual exclusivity: `--at` cannot combine with `--from/--to`. `--all` cannot com
 | 10 | DX Core 4 overlay | 60 | 484 |
 | 11 | CLI `--all` + DuckDB storage | 52 | 536 |
 | 12 | Web dashboard (FastAPI + Streamlit + Plotly) | 46 | 582 |
+| — | Quick win metric improvements (DRI→Gini, rework window, lift filter, relative churn, cognitive complexity) | 10 | 592 |
+| — | Research-backed improvements (temporal decay, recency-weighted KDI, K-Means++, auto-tune alpha, interaction features) | 19 | 611 |
+| — | Java support (tree-sitter: complexity, anemic, god class) + anemia→anemic rename | 68 | 679 |
+| — | God class detection (Python + Java: WMC, TCC, GCS) | 73 | 752 |
 
 ---
 
 ## 20. Testing
 
-582 tests using pytest with TDD workflow (RED-GREEN-REFACTOR).
+752 tests using pytest with TDD workflow (RED-GREEN-REFACTOR).
 
 - **Unit tests**: domain models, use cases (with `FakeGitRepository`/`FakeSourceCodeReader`), all engines
 - **Integration tests**: `GitCliReader` and `GitSourceReader` against real temp git repos (via `conftest.py` fixtures)

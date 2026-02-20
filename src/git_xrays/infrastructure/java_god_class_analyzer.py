@@ -59,21 +59,19 @@ def _is_getter_or_setter(method_node: Node) -> bool:
 
 
 def _has_logic(node: Node) -> bool:
-    """Check if a node contains logic statements."""
+    """Check if a node contains logic statements (iterative)."""
     logic_types = frozenset({
         "if_statement", "for_statement", "while_statement",
         "do_statement", "try_statement", "switch_expression",
         "enhanced_for_statement",
     })
-
-    def _walk(n: Node) -> bool:
+    stack = [node]
+    while stack:
+        n = stack.pop()
         if n.type in logic_types:
             return True
-        for child in n.children:
-            if _walk(child):
-                return True
-        return False
-    return _walk(node)
+        stack.extend(n.children)
+    return False
 
 
 def _get_candidate_methods(class_node: Node) -> list[Node]:
@@ -89,15 +87,17 @@ def _get_candidate_methods(class_node: Node) -> list[Node]:
 
 
 def _compute_method_complexity(method_node: Node) -> int:
-    """Compute cyclomatic complexity for a single Java method."""
+    """Compute cyclomatic complexity for a single Java method (iterative)."""
     complexity = 1
-
-    def _walk(n: Node) -> None:
-        nonlocal complexity
+    body = method_node.child_by_field_name("body")
+    if not body:
+        return complexity
+    stack = [body]
+    while stack:
+        n = stack.pop()
         if n.type in _DECISION_TYPES:
             complexity += 1
         elif n.type == "switch_expression":
-            # Count case labels
             for child in n.named_children:
                 if child.type == "switch_block_statement_group":
                     for sub in child.named_children:
@@ -107,12 +107,7 @@ def _compute_method_complexity(method_node: Node) -> int:
             op = n.child_by_field_name("operator")
             if op and op.text in (b"&&", b"||"):
                 complexity += 1
-        for child in n.children:
-            _walk(child)
-
-    body = method_node.child_by_field_name("body")
-    if body:
-        _walk(body)
+        stack.extend(n.children)
     return complexity
 
 
@@ -127,21 +122,20 @@ def _compute_wmc(class_node: Node) -> int:
 
 
 def _get_field_accesses(method_node: Node) -> set[str]:
-    """Collect field names accessed via this.field or direct field references."""
+    """Collect field names accessed via this.field or direct field references (iterative)."""
     fields: set[str] = set()
-
-    def _walk(n: Node) -> None:
+    body = method_node.child_by_field_name("body")
+    if not body:
+        return fields
+    stack = [body]
+    while stack:
+        n = stack.pop()
         if n.type == "field_access":
             obj = n.child_by_field_name("object")
             field = n.child_by_field_name("field")
             if obj and field and obj.text == b"this":
                 fields.add(field.text.decode("utf-8"))
-        for child in n.children:
-            _walk(child)
-
-    body = method_node.child_by_field_name("body")
-    if body:
-        _walk(body)
+        stack.extend(n.children)
     return fields
 
 
