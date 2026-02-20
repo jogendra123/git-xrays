@@ -89,7 +89,7 @@ if not run_detail:
 
 tab_names = [
     "Overview", "Hotspots", "Knowledge", "Coupling",
-    "Complexity", "Clustering", "Effort", "Anemia", "God Classes", "Time Travel",
+    "Complexity", "Clustering", "Effort", "Anemic", "God Classes", "Time Travel",
 ]
 tabs = st.tabs(tab_names)
 
@@ -330,7 +330,7 @@ with tabs[6]:
     else:
         st.info("No effort data.")
 
-# ── Tab 8: Anemia ──────────────────────────────────────────────────
+# ── Tab 8: Anemic ──────────────────────────────────────────────────
 
 with tabs[7]:
     st.header("Anemic Domain Model Detection")

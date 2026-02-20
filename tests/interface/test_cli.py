@@ -307,7 +307,7 @@ class TestAnemicCli:
         )
         main()
         captured = capsys.readouterr()
-        assert "Anemia Analysis" in captured.out
+        assert "Anemic Analysis" in captured.out
 
     def test_anemic_shows_total_classes(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
@@ -334,7 +334,7 @@ class TestAnemicCli:
         )
         main()
         captured = capsys.readouterr()
-        assert "Anemia Analysis" not in captured.out
+        assert "Anemic Analysis" not in captured.out
 
     def test_anemic_with_at_flag(self, anemic_repo, capsys, monkeypatch):
         monkeypatch.setattr(
@@ -343,7 +343,7 @@ class TestAnemicCli:
         )
         main()
         captured = capsys.readouterr()
-        assert "Anemia Analysis" in captured.out
+        assert "Anemic Analysis" in captured.out
 
 
 class TestComplexityCli:
@@ -680,7 +680,7 @@ class TestAllFlag:
         assert "Hotspot Analysis" in captured.out
         assert "Knowledge Analysis" in captured.out
         assert "Coupling Analysis" in captured.out
-        assert "Anemia Analysis" in captured.out
+        assert "Anemic Analysis" in captured.out
         assert "Complexity Analysis" in captured.out
         assert "Clustering Analysis" in captured.out
         assert "Effort Analysis" in captured.out

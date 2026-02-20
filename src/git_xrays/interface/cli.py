@@ -648,7 +648,7 @@ def _print_comparison(report) -> None:
 
 def _print_anemic(report) -> None:
     print(
-        f"--- Anemia Analysis "
+        f"--- Anemic Analysis "
         f"({report.total_classes} classes in {report.total_files} files) ---\n"
     )
 
