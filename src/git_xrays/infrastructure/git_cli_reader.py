@@ -121,6 +121,9 @@ def _parse_numstat(output: str) -> list[FileChange]:
         # Binary files show "-" for added/deleted
         if added_str == "-" or deleted_str == "-":
             continue
+        # Skip Markdown files
+        if file_path.endswith(".md"):
+            continue
         changes.append(
             FileChange(
                 commit_hash=current_hash,
